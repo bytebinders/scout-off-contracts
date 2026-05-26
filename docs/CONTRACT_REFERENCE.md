@@ -32,7 +32,7 @@ Manages the trusted validator registry and milestone approvals.
 | `set_progress_contract(progress_contract)` | admin | Wire cross-contract link |
 | `register_validator(wallet, credentials)` | admin | Add trusted validator |
 | `revoke_validator(wallet)` | admin | Deactivate validator |
-| `approve_milestone(validator_wallet, player_id, description, evidence_hash)` | validator | Record milestone + cross-call progress.advance_level |
+| `approve_milestone(validator_wallet, player_id, description, evidence_hash)` | validator | Record milestone (with ledger_sequence for audit) + cross-call progress.advance_level |
 | `get_milestone(player_id, index)` | — | Read a specific milestone |
 | `get_milestone_count(player_id)` | — | Total milestones for a player |
 | `get_validator(wallet)` | — | Read validator record |
