@@ -288,6 +288,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, vec, Env, String};
 
+    #[cfg(test)]
     fn setup() -> (Env, RegistrationContractClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
@@ -296,6 +297,7 @@ mod tests {
         (env, client)
     }
 
+    #[cfg(test)]
     fn dummy_vitals(env: &Env) -> PlayerVitals {
         PlayerVitals {
             age: 18,
