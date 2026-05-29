@@ -129,6 +129,20 @@ impl RegistrationContract {
         Ok(())
     }
 
+    /// Deregister a player profile (admin only, GDPR right-to-erasure).
+    pub fn deregister_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
+        Self::require_admin(&env)?;
+        let profile = Self::load_player(&env, player_id)?;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Player(player_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PlayerByWallet(profile.wallet));
+        events::player_deregistered(&env, player_id);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Scout registration
     // -------------------------------------------------------------------------
@@ -620,5 +634,62 @@ mod tests {
         let new_hashes = vec![&env, String::from_str(&env, "QmNew")];
         // This should panic with ContractPaused error
         client.update_profile(&player_id, &new_hashes);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #25: deregister_player admin function
+    // -------------------------------------------------------------------------
+
+    #[test]
+    #[should_panic]
+    fn test_deregister_player_success() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        // Verify player exists
+        let profile = client.get_player(&player_id);
+        assert_eq!(profile.player_id, player_id);
+
+        // Deregister player
+        client.deregister_player(&player_id);
+
+        // Verify player no longer exists (should panic with PlayerNotFound)
+        client.get_player(&player_id);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_deregister_player_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Try to deregister non-existent player (should panic with PlayerNotFound)
+        client.deregister_player(&999);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_deregister_player_removes_wallet_index() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        // Deregister player
+        client.deregister_player(&player_id);
+
+        // Verify wallet index is also removed (should panic with PlayerNotFound)
+        client.get_player_by_wallet(&wallet);
     }
 }
