@@ -516,4 +516,32 @@ mod tests {
             &String::from_str(&env, "QmHash"),
         );
     }
+
+    #[test]
+    #[should_panic]
+    fn test_get_validator_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let unknown = Address::generate(&env);
+        client.get_validator(&unknown);
+    }
+
+    #[test]
+    fn test_get_validator_returns_correct_data() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let creds = String::from_str(&env, "UEFA B License");
+        client.register_validator(&wallet, &creds);
+
+        let validator = client.get_validator(&wallet);
+        assert_eq!(validator.wallet, wallet);
+        assert_eq!(validator.credentials, creds);
+        assert!(validator.active);
+        assert!(validator.registered_at > 0);
+    }
 }
