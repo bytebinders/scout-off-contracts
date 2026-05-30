@@ -52,6 +52,63 @@ impl ProgressContract {
         Ok(())
     }
 
+    /// Store the address of the registration contract.
+    /// Only the admin may call this; must be called before `initialize_player`
+    /// can be used.
+    pub fn set_registration_contract(
+        env: Env,
+        addr: Address,
+    ) -> Result<(), ProgressError> {
+        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::RegistrationContract, &addr);
+        Ok(())
+    }
+
+    /// Explicitly create an on-chain record for `player_id` at
+    /// [`ProgressLevel::Unverified`], making it possible to distinguish a
+    /// known-but-unadvanced player from an ID that has never been seen.
+    ///
+    /// Only the address stored under [`DataKey::RegistrationContract`] may
+    /// call this function.  Returns [`ProgressError::PlayerAlreadyInitialized`]
+    /// if the key already exists.
+    pub fn initialize_player(
+        env: Env,
+        caller: Address,
+        player_id: u64,
+    ) -> Result<(), ProgressError> {
+        Self::require_not_paused(&env)?;
+        Self::require_initialized(&env)?;
+        caller.require_auth();
+
+        // Only the registered registration contract is authorised.
+        let registration_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RegistrationContract)
+            .ok_or(ProgressError::Unauthorized)?;
+        if caller != registration_contract {
+            return Err(ProgressError::Unauthorized);
+        }
+
+        // Reject duplicate initialisation.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::PlayerLevel(player_id))
+        {
+            return Err(ProgressError::PlayerAlreadyInitialized);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PlayerLevel(player_id), &ProgressLevel::Unverified);
+
+        events::player_initialized(&env, player_id, &caller);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Progress updates
     // -------------------------------------------------------------------------
@@ -320,5 +377,66 @@ mod tests {
         // Clear mocks — old admin auth no longer stored, so pause must fail
         env.mock_auths(&[]);
         client.pause_contract();
+    }
+
+    // -------------------------------------------------------------------------
+    // initialize_player tests
+    // -------------------------------------------------------------------------
+
+    /// Helper: set up a fully initialised contract and register a registration
+    /// contract address, returning both the client and the registration address.
+    fn setup_with_registration() -> (Env, ProgressContractClient<'static>, Address) {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let reg = Address::generate(&env);
+        client.set_registration_contract(&reg);
+        (env, client, reg)
+    }
+
+    #[test]
+    fn test_initialize_player_sets_unverified() {
+        let (env, client, reg) = setup_with_registration();
+        let player_id = 100u64;
+
+        // Before initialization the key is absent — get_level returns Unverified
+        // via unwrap_or, but has() on the storage key is false.
+        // After initialize_player the key must be explicitly present.
+        client.initialize_player(&reg, &player_id);
+
+        assert_eq!(client.get_level(&player_id), ProgressLevel::Unverified);
+    }
+
+    #[test]
+    fn test_initialize_player_duplicate_returns_error() {
+        let (env, client, reg) = setup_with_registration();
+        let player_id = 101u64;
+
+        client.initialize_player(&reg, &player_id);
+
+        let err = client
+            .try_initialize_player(&reg, &player_id)
+            .expect_err("expected error on duplicate initialize_player");
+        assert_eq!(
+            err.unwrap(),
+            ProgressError::PlayerAlreadyInitialized,
+            "expected PlayerAlreadyInitialized on duplicate call"
+        );
+    }
+
+    #[test]
+    fn test_initialize_player_unauthorized_caller() {
+        let (env, client, _reg) = setup_with_registration();
+        let player_id = 102u64;
+        let impostor = Address::generate(&env);
+
+        let err = client
+            .try_initialize_player(&impostor, &player_id)
+            .expect_err("expected error for unauthorized caller");
+        assert_eq!(
+            err.unwrap(),
+            ProgressError::Unauthorized,
+            "expected Unauthorized for non-registration caller"
+        );
     }
 }

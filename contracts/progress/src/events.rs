@@ -22,3 +22,10 @@ pub fn progress_updated(
         (player_id, new_level.clone()),
     );
 }
+
+pub fn player_initialized(env: &Env, player_id: u64, caller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "player_initialized"), caller.clone()),
+        (player_id,),
+    );
+}

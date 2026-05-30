@@ -42,4 +42,7 @@ pub enum DataKey {
     /// The `Address` of the companion verification contract. Reserved for
     /// future cross-contract authorisation checks; not yet written at runtime.
     VerificationContract,
+    /// The `Address` of the registration contract. Only this address is
+    /// permitted to call `initialize_player`. Set by `set_registration_contract`.
+    RegistrationContract,
 }
