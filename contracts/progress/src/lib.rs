@@ -52,6 +52,16 @@ impl ProgressContract {
         Ok(())
     }
 
+    /// Store the verification contract address allowed to call `advance_level`.
+    /// When set, only that contract may authorize level advances (admin only).
+    pub fn set_verification_contract(env: Env, addr: Address) -> Result<(), ProgressError> {
+        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::VerificationContract, &addr);
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Progress updates
     // -------------------------------------------------------------------------
@@ -67,7 +77,19 @@ impl ProgressContract {
     ) -> Result<ProgressLevel, ProgressError> {
         Self::require_not_paused(&env)?;
         Self::require_initialized(&env)?;
-        caller.require_auth();
+
+        if let Some(verification_contract) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::VerificationContract)
+        {
+            // When configured, only the verification contract may invoke this
+            // function (directly or via cross-contract call). The `caller`
+            // argument still records the validator or scout that triggered it.
+            verification_contract.require_auth();
+        } else {
+            caller.require_auth();
+        }
 
         let current = Self::get_current_level(&env, player_id);
         let new_level = current
@@ -278,5 +300,48 @@ mod tests {
         // Clear mocks — old admin auth no longer stored, so pause must fail
         env.mock_auths(&[]);
         client.pause_contract();
+    }
+
+    #[test]
+    fn test_advance_level_without_verification_contract() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let caller = Address::generate(&env);
+        let player_id = 1u64;
+
+        let level = client.advance_level(&caller, &player_id, &1u32);
+        assert_eq!(level, ProgressLevel::VerifiedIdentity);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_advance_level_unauthorized_when_verification_contract_set() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let verification_contract = Address::generate(&env);
+        client.set_verification_contract(&verification_contract);
+
+        env.mock_auths(&[]);
+
+        let random = Address::generate(&env);
+        client.advance_level(&random, &1u64, &1u32);
+    }
+
+    #[test]
+    fn test_advance_level_succeeds_when_verification_contract_set() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let verification_contract = Address::generate(&env);
+        client.set_verification_contract(&verification_contract);
+
+        let player_id = 1u64;
+        let level = client.advance_level(&verification_contract, &player_id, &1u32);
+        assert_eq!(level, ProgressLevel::VerifiedIdentity);
     }
 }
