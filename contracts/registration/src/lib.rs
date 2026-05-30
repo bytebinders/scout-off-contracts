@@ -199,6 +199,7 @@ impl RegistrationContract {
             scout_id,
             wallet: wallet.clone(),
             region,
+            verified: false,
             registered_at: env.ledger().timestamp(),
         };
 
@@ -238,6 +239,22 @@ impl RegistrationContract {
             .persistent()
             .get(&DataKey::Scout(scout_id))
             .ok_or(ScoutChainError::ScoutNotFound)
+    }
+
+    /// Verify a scout profile (admin only).
+    pub fn verify_scout(env: Env, scout_id: u64) -> Result<(), ScoutChainError> {
+        Self::require_admin(&env)?;
+        let mut profile = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scout(scout_id))
+            .ok_or(ScoutChainError::ScoutNotFound)?;
+        profile.verified = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Scout(scout_id), &profile);
+        events::scout_verified(&env, scout_id);
+        Ok(())
     }
 
     pub fn get_player_count(env: Env) -> u64 {
@@ -814,4 +831,57 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results.get(0).player_id, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #32: Scout verified flag and verify_scout admin function
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_newly_registered_scout_not_verified() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "Europe");
+        let scout_id = client.register_scout(&wallet, &region);
+
+        let scout = client.get_scout(&scout_id);
+        assert!(!scout.verified);
+    }
+
+    #[test]
+    fn test_admin_can_verify_scout() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "Europe");
+        let scout_id = client.register_scout(&wallet, &region);
+
+        client.verify_scout(&scout_id);
+
+        let scout = client.get_scout(&scout_id);
+        assert!(scout.verified);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unauthorized")]
+    fn test_non_admin_cannot_verify_scout() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let region = String::from_str(&env, "Europe");
+        let scout_id = client.register_scout(&wallet, &region);
+
+        // Disable mock auth to test authorization
+        env.mock_all_auths_allowing_non_root_auth();
+        let non_admin = Address::generate(&env);
+        env.as_contract(&non_admin, || {
+            client.verify_scout(&scout_id);
+        });
     }
