@@ -159,7 +159,7 @@ impl ScoutAccessContract {
         let xlm = Self::xlm_token(&env);
         let contract_addr = env.current_contract_address();
         token::Client::new(&env, &xlm).transfer(&scout, &contract_addr, &fee);
-        Self::accumulate_fee(&env, fee);
+        Self::accumulate_fee(&env, fee)?;
 
         let now = env.ledger().timestamp();
         let sub = Subscription {
@@ -209,7 +209,7 @@ impl ScoutAccessContract {
             &contract_addr,
             &config.contact_fee_stroops,
         );
-        Self::accumulate_fee(&env, config.contact_fee_stroops);
+        Self::accumulate_fee(&env, config.contact_fee_stroops)?;
 
         env.storage().persistent().set(&contact_key, &true);
         env.storage()
@@ -437,15 +437,19 @@ impl ScoutAccessContract {
             .expect("xlm token not set")
     }
 
-    fn accumulate_fee(env: &Env, amount: i128) {
+    fn accumulate_fee(env: &Env, amount: i128) -> Result<(), ScoutAccessError> {
         let current: i128 = env
             .storage()
             .instance()
             .get(&DataKey::AccumulatedFees)
             .unwrap_or(0i128);
+        let new_total = current
+            .checked_add(amount)
+            .ok_or(ScoutAccessError::Overflow)?;
         env.storage()
             .instance()
-            .set(&DataKey::AccumulatedFees, &(current + amount));
+            .set(&DataKey::AccumulatedFees, &new_total);
+        Ok(())
     }
 }
 
@@ -745,5 +749,24 @@ mod tests {
         // Should return InsufficientFee since fees are 0
         let result = client.try_withdraw_fees(&recipient);
         assert_eq!(result, Err(Ok(ScoutAccessError::InsufficientFee)));
+    }
+
+    #[test]
+    fn test_fee_accumulation_overflow() {
+        let (env, admin, xlm, contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
+        // Manually set AccumulatedFees to near MAX
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::AccumulatedFees, &(i128::MAX - 1));
+        });
+
+        // Subscribing should trigger overflow in accumulate_fee
+        // basic_sub_stroops is 1,000_000
+        let result = client.try_subscribe(&scout, &SubscriptionTier::Basic);
+        assert_eq!(result, Err(Ok(ScoutAccessError::Overflow)));
     }
 }
