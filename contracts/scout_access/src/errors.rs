@@ -16,4 +16,6 @@ pub enum ScoutAccessError {
     Overflow = 10,
     TrialOfferNotFound = 11,
     ProgressCallFailed = 14,
+    /// A fee field is zero or negative, or sub_duration_secs is zero
+    InvalidInput = 15,
 }

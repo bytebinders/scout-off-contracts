@@ -29,6 +29,7 @@ impl ScoutAccessContract {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(ScoutAccessError::AlreadyInitialized);
         }
+        Self::validate_fee_config(&fee_config)?;
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::XlmToken, &xlm_token);
@@ -41,6 +42,7 @@ impl ScoutAccessContract {
 
     pub fn update_fee_config(env: Env, fee_config: FeeConfig) -> Result<(), ScoutAccessError> {
         Self::require_admin(&env)?;
+        Self::validate_fee_config(&fee_config)?;
         env.storage().instance().set(&DataKey::FeeConfig, &fee_config);
         Ok(())
     }
@@ -397,6 +399,19 @@ impl ScoutAccessContract {
             .instance()
             .set(&DataKey::AccumulatedFees, &(current + amount));
     }
+
+    /// Validate that every fee field is positive and sub_duration_secs is non-zero.
+    fn validate_fee_config(config: &FeeConfig) -> Result<(), ScoutAccessError> {
+        if config.contact_fee_stroops <= 0
+            || config.basic_sub_stroops <= 0
+            || config.pro_sub_stroops <= 0
+            || config.elite_sub_stroops <= 0
+            || config.sub_duration_secs == 0
+        {
+            return Err(ScoutAccessError::InvalidInput);
+        }
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -615,5 +630,141 @@ mod tests {
         // get_subscription must succeed and re-extend the TTL.
         let sub = client.get_subscription(&scout);
         assert_eq!(sub.tier, SubscriptionTier::Basic);
+    }
+
+    // -------------------------------------------------------------------------
+    // validate_fee_config tests
+    // -------------------------------------------------------------------------
+
+    fn make_contract() -> (Env, Address, Address, ScoutAccessContractClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let xlm = create_token(&env, &admin);
+        let contract_id = env.register_contract(None, ScoutAccessContract);
+        let client = ScoutAccessContractClient::new(&env, &contract_id);
+        (env, admin, xlm, client)
+    }
+
+    #[test]
+    fn test_initialize_zero_contact_fee_returns_invalid_input() {
+        let (env, admin, xlm, client) = make_contract();
+        let bad_fees = FeeConfig {
+            contact_fee_stroops: 0,
+            ..default_fees()
+        };
+        let result = client.try_initialize(&admin, &xlm, &bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_initialize_zero_basic_sub_returns_invalid_input() {
+        let (env, admin, xlm, client) = make_contract();
+        let bad_fees = FeeConfig {
+            basic_sub_stroops: 0,
+            ..default_fees()
+        };
+        let result = client.try_initialize(&admin, &xlm, &bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_initialize_zero_pro_sub_returns_invalid_input() {
+        let (env, admin, xlm, client) = make_contract();
+        let bad_fees = FeeConfig {
+            pro_sub_stroops: 0,
+            ..default_fees()
+        };
+        let result = client.try_initialize(&admin, &xlm, &bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_initialize_zero_elite_sub_returns_invalid_input() {
+        let (env, admin, xlm, client) = make_contract();
+        let bad_fees = FeeConfig {
+            elite_sub_stroops: 0,
+            ..default_fees()
+        };
+        let result = client.try_initialize(&admin, &xlm, &bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_initialize_zero_sub_duration_returns_invalid_input() {
+        let (env, admin, xlm, client) = make_contract();
+        let bad_fees = FeeConfig {
+            sub_duration_secs: 0,
+            ..default_fees()
+        };
+        let result = client.try_initialize(&admin, &xlm, &bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_initialize_negative_fee_returns_invalid_input() {
+        let (env, admin, xlm, client) = make_contract();
+        let bad_fees = FeeConfig {
+            contact_fee_stroops: -1,
+            ..default_fees()
+        };
+        let result = client.try_initialize(&admin, &xlm, &bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_initialize_valid_fee_config_succeeds() {
+        let (env, admin, xlm, client) = make_contract();
+        let result = client.try_initialize(&admin, &xlm, &default_fees());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_update_fee_config_zero_subscription_fee_returns_invalid_input() {
+        let (_, _, _, _, client) = setup();
+        let bad_fees = FeeConfig {
+            basic_sub_stroops: 0,
+            ..default_fees()
+        };
+        let result = client.try_update_fee_config(&bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_update_fee_config_zero_contact_fee_returns_invalid_input() {
+        let (_, _, _, _, client) = setup();
+        let bad_fees = FeeConfig {
+            contact_fee_stroops: 0,
+            ..default_fees()
+        };
+        let result = client.try_update_fee_config(&bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_update_fee_config_zero_duration_returns_invalid_input() {
+        let (_, _, _, _, client) = setup();
+        let bad_fees = FeeConfig {
+            sub_duration_secs: 0,
+            ..default_fees()
+        };
+        let result = client.try_update_fee_config(&bad_fees);
+        assert_eq!(result, Err(Ok(ScoutAccessError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_update_fee_config_valid_succeeds() {
+        let (_, _, _, _, client) = setup();
+        let new_fees = FeeConfig {
+            contact_fee_stroops: 200_000,
+            basic_sub_stroops: 2_000_000,
+            pro_sub_stroops: 5_000_000,
+            elite_sub_stroops: 10_000_000,
+            sub_duration_secs: 60 * 24 * 60 * 60,
+        };
+        let result = client.try_update_fee_config(&new_fees);
+        assert!(result.is_ok());
+        let stored = client.get_fee_config();
+        assert_eq!(stored.contact_fee_stroops, 200_000);
     }
 }
