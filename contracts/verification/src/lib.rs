@@ -145,6 +145,22 @@ impl VerificationContract {
         Self::require_not_paused(&env)?;
         validator_wallet.require_auth();
 
+        // Validate evidence_hash: must start with "Qm" or "bafy", max 128 bytes
+        let hash_len = evidence_hash.len();
+        if hash_len > 128 || hash_len < 2 {
+            return Err(VerificationError::InvalidInput);
+        }
+        let hash_bytes = evidence_hash.to_bytes();
+        let starts_with_qm = hash_bytes.get(0) == Some(b'Q') && hash_bytes.get(1) == Some(b'm');
+        let starts_with_bafy = hash_len >= 4
+            && hash_bytes.get(0) == Some(b'b')
+            && hash_bytes.get(1) == Some(b'a')
+            && hash_bytes.get(2) == Some(b'f')
+            && hash_bytes.get(3) == Some(b'y');
+        if !starts_with_qm && !starts_with_bafy {
+            return Err(VerificationError::InvalidInput);
+        }
+
         // Verify the caller is an active validator
         let validator: Validator = env
             .storage()
@@ -526,5 +542,53 @@ mod tests {
 
         let unknown = Address::generate(&env);
         client.get_validator(&unknown);
+    }
+
+    #[test]
+    fn test_evidence_hash_valid_qm_prefix() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+        let idx = client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "milestone"),
+            &String::from_str(&env, "QmTest123"),
+        );
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn test_evidence_hash_valid_bafy_prefix() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+        let idx = client.approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "milestone"),
+            &String::from_str(&env, "bafyTest"),
+        );
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn test_evidence_hash_invalid_returns_invalid_input() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+        let result = client.try_approve_milestone(
+            &validator,
+            &1u64,
+            &String::from_str(&env, "milestone"),
+            &String::from_str(&env, "http://example.com"),
+        );
+        assert_eq!(result, Err(Ok(VerificationError::InvalidInput)));
     }
 }
