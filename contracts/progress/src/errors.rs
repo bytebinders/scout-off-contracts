@@ -18,7 +18,6 @@ pub enum ProgressError {
     AlreadyAtMaxLevel = 6,
     /// No progress record exists for the given player ID.
     PlayerNotFound = 7,
-    /// `initialize_player` was called for a player ID that already has an
-    /// on-chain record; duplicate initialisation is not permitted.
-    PlayerAlreadyInitialized = 9,
+    /// History counter overflowed the maximum u32 value.
+    Overflow = 8,
 }
