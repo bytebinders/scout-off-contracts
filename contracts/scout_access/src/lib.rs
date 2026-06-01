@@ -10,6 +10,8 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 // ~30 days at 5 s/ledger; extend when TTL drops below half that.
 const TRIAL_TTL_THRESHOLD: u32 = 259_200;
 const TRIAL_TTL_EXTEND_TO: u32 = 518_400;
+const PERSISTENT_TTL_MIN: u32 = 2000;
+const PERSISTENT_TTL_MAX: u32 = 10000;
 
 // Persistent entries: extend when TTL < 1000 ledgers; extend to 2000.
 const PERSISTENT_TTL_MIN: u32 = 1000;
