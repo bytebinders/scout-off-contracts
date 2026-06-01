@@ -15,10 +15,10 @@ pub fn scout_subscribed(env: &Env, scout: &Address, tier: &SubscriptionTier) {
     );
 }
 
-pub fn player_contacted(env: &Env, player_id: u64, scout: &Address) {
+pub fn player_contacted(env: &Env, player_id: u64, scout: &Address, fee_paid: i128) {
     env.events().publish(
         (Symbol::new(env, "player_contacted"), scout.clone()),
-        player_id,
+        (player_id, fee_paid),
     );
 }
 

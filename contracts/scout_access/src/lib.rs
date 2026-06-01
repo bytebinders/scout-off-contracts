@@ -256,7 +256,7 @@ impl ScoutAccessContract {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Subscription(scout.clone()), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
-        events::player_contacted(&env, player_id, &scout);
+        events::player_contacted(&env, player_id, &scout, config.contact_fee_stroops);
         Ok(())
     }
 
@@ -623,6 +623,35 @@ mod tests {
         assert!(client.has_contacted(&scout, &1u64));
         // elite fee + contact fee
         assert_eq!(client.get_accumulated_fees(), 7_000_000 + 100_000);
+    }
+
+    #[test]
+    fn test_player_contacted_event_includes_fee_paid() {
+        let (env, admin, xlm, contract_id, client) = setup();
+        let scout = Address::generate(&env);
+        mint_token(&env, &xlm, &admin, &scout, 100_000_000);
+
+        client.subscribe(&scout, &SubscriptionTier::Elite);
+        client.pay_to_contact(&scout, &42u64);
+
+        // Retrieve the published events and find the player_contacted one.
+        let events = env.events().all();
+        let contact_event = events.iter().find(|(_, topics, _)| {
+            // topics is a Vec<Val>; the first topic is the Symbol.
+            if let Some(first) = topics.first() {
+                if let Ok(sym) = Symbol::try_from_val(&env, &first) {
+                    return sym == Symbol::new(&env, "player_contacted");
+                }
+            }
+            false
+        });
+
+        let (_, _, data) = contact_event.expect("player_contacted event not found");
+        // Data is published as (player_id: u64, fee_paid: i128).
+        let (player_id, fee_paid): (u64, i128) =
+            soroban_sdk::FromVal::from_val(&env, &data);
+        assert_eq!(player_id, 42u64);
+        assert_eq!(fee_paid, default_fees().contact_fee_stroops);
     }
 
     #[test]
