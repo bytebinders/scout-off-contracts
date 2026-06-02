@@ -142,9 +142,33 @@ impl VerificationContract {
         env.storage()
             .persistent()
             .set(&DataKey::Validator(wallet.clone()), &validator);
+events::validator_registered(&env, &wallet);
 
-        events::validator_registered(&env, &wallet);
+        // // ------ PASTE THE TRACKING LOGIC HERE ------
+        let mut validator_vector: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ValidatorVector)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if validator_vector.len() >= 100 {
+            panic!("Maximum validator capacity of 100 reached");
+        }
+
+        if !validator_vector.contains(&wallet) {
+            validator_vector.push_back(wallet.clone());
+        }
+
+        env.storage().persistent().set(&DataKey::ValidatorVector, &validator_vector);
+        // // -------------------------------------------
+
         Ok(())
+    }
+    pub fn get_validators(env: Env) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ValidatorVector)
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     /// Deactivate a validator (admin only).
@@ -814,3 +838,30 @@ mod tests {
         assert_eq!(env.events().all(), soroban_sdk::vec![&env]);
     }
 }
+#[test]
+fn test_get_validators_includes_revoked() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    // Generate 3 different validator wallets
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    let v3 = Address::generate(&env);
+
+    // 1. Register 3 validators
+    client.register_validator(&v1, &String::from_str(&env, "Credentials 1"));
+    client.register_validator(&v2, &String::from_str(&env, "Credentials 2"));
+    client.register_validator(&v3, &String::from_str(&env, "Credentials 3"));
+
+    // 2. Revoke 1 validator
+    client.revoke_validator(&v2);
+
+    // 3. Assert all 3 are still returned by get_validators query
+    let validators = client.get_validators();
+    assert_eq!(validators.len(), 3);
+    assert!(validators.contains(&v1));
+    assert!(validators.contains(&v2));
+    assert!(validators.contains(&v3));
+}
+
