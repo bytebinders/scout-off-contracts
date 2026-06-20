@@ -1,6 +1,4 @@
-#![cfg_attr(target_family = "wasm", no_std)]
-#![no_std]
-mod errors;
+#![cfg_attr(target_family = "wasm", no_std)]mod errors;
 mod events;
 mod types;
 
@@ -516,16 +514,22 @@ impl ScoutAccessContract {
     // -------------------------------------------------------------------------
 
     fn require_admin(env: &Env) -> Result<(), ScoutAccessError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ScoutAccessError::NotInitialized)?;
-        let admin = Self::get_admin(env);
-        admin.require_auth();
-        env.storage().persistent().extend_ttl(&DataKey::Admin, ADMIN_BUMP_LEDGERS, ADMIN_BUMP_LEDGERS);
-        Ok(())
-    }
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ScoutAccessError::NotInitialized)?;
+
+    admin.require_auth();
+
+    env.storage().persistent().extend_ttl(
+        &DataKey::Admin,
+        ADMIN_BUMP_LEDGERS,
+        ADMIN_BUMP_LEDGERS,
+    );
+
+    Ok(())
+}
 
     fn require_initialized(env: &Env) -> Result<(), ScoutAccessError> {
         if !env
@@ -1373,11 +1377,14 @@ mod tests {
         let scout_balance_after = TokenClient::new(&env, &xlm).balance(&scout);
 
         assert_eq!(
-            contract_balance_before - refund_amount,
-            contract_balance_after
-        );
-        assert_eq!(scout_balance_before + refund_amount, scout_balance_after);
-    }
+    contract_balance_before - refund_amount,
+    contract_balance_after
+);
+
+assert_eq!(
+    scout_balance_before + refund_amount,
+    scout_balance_after
+);
 
     #[test]
     fn test_refund_subscription_zero_amount_rejected() {
