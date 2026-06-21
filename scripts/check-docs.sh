@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # check-docs.sh — CI lint step for CONTRACT_REFERENCE.md completeness.
 #
-# For every #[contractimpl] block in the four contracts this script extracts
-# every `pub fn` name and verifies that a corresponding entry exists in
-# docs/CONTRACT_REFERENCE.md.
+# 1. For every #[contractimpl] block in the four contracts this script extracts
+#    every `pub fn` name and verifies that a corresponding entry exists in
+#    docs/CONTRACT_REFERENCE.md.
+#
+# 2. For every #[contracterror] enum in each errors.rs this script extracts
+#    all `VariantName = N` discriminants and verifies that every (code, variant)
+#    pair appears verbatim in the matching per-contract error table in
+#    docs/CONTRACT_REFERENCE.md.  This catches numeric-code drift without
+#    requiring a compiled WASM binary.
 #
 # Exit codes:
-#   0 — all public functions are documented
-#   1 — one or more functions are missing from the reference
+#   0 — all public functions and all error codes are documented correctly
+#   1 — one or more entries are missing or have the wrong numeric code
 
 set -euo pipefail
 
@@ -93,6 +99,88 @@ check_contract() {
 }
 
 # ---------------------------------------------------------------------------
+# extract_error_codes <errors_rs_file>
+#   Prints "CODE VARIANT" pairs from a #[contracterror] enum.
+# ---------------------------------------------------------------------------
+extract_error_codes() {
+  local file="$1"
+  python3 - "$file" <<'PYEOF'
+import re, sys
+
+src = open(sys.argv[1]).read()
+
+# Locate the contracterror enum body
+m = re.search(r'#\[contracterror\].*?enum\s+\w+\s*\{([^}]+)\}', src, re.DOTALL)
+if not m:
+    sys.exit(0)
+
+body = m.group(1)
+# Match lines like:  VariantName = 12,  (with optional doc comments before)
+for match in re.finditer(r'\b([A-Z][A-Za-z0-9]+)\s*=\s*(\d+)', body):
+    print(match.group(2), match.group(1))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# check_error_codes <label> <errors_rs_file> <section_header_pattern>
+#   Verifies every (code, variant) pair from the Rust source is present
+#   in CONTRACT_REFERENCE.md under the matching section heading.
+# ---------------------------------------------------------------------------
+check_error_codes() {
+  local label="$1"
+  local errors_rs="$2"
+  local section_pattern="$3"
+
+  echo "Checking error codes: $label"
+
+  # Extract the relevant section from CONTRACT_REFERENCE.md
+  local section
+  section=$(python3 - "$DOCS_FILE" "$section_pattern" <<'PYEOF'
+import re, sys
+
+content = open(sys.argv[1]).read()
+pattern = sys.argv[2]
+
+# Find the section that matches the pattern, then grab text until the next ###
+m = re.search(pattern + r'.*?\n(.*?)(?=\n###|\Z)', content, re.DOTALL | re.IGNORECASE)
+if m:
+    print(m.group(1))
+PYEOF
+)
+
+  local missing=()
+  local wrong_code=()
+
+  while IFS=' ' read -r code variant; do
+    [[ -z "$code" || -z "$variant" ]] && continue
+    # Each row must contain the numeric code and the backtick-quoted variant name
+    if ! echo "$section" | grep -qE "^\|\s*${code}\s*\|.*\`${variant}\`"; then
+      # Distinguish: variant present but with wrong code vs entirely absent
+      if echo "$section" | grep -qE "\`${variant}\`"; then
+        wrong_code+=("${variant} (expected code ${code})")
+      else
+        missing+=("${code} = ${variant}")
+      fi
+    fi
+  done < <(extract_error_codes "$errors_rs")
+
+  if [[ ${#missing[@]} -eq 0 && ${#wrong_code[@]} -eq 0 ]]; then
+    echo "  OK"
+    return
+  fi
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "  MISSING from CONTRACT_REFERENCE.md:"
+    for e in "${missing[@]}"; do echo "    - $e"; done
+  fi
+  if [[ ${#wrong_code[@]} -gt 0 ]]; then
+    echo "  WRONG CODE in CONTRACT_REFERENCE.md:"
+    for e in "${wrong_code[@]}"; do echo "    - $e"; done
+  fi
+  FAIL=1
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "=== CONTRACT_REFERENCE.md completeness check ==="
@@ -104,10 +192,30 @@ check_contract "progress"      "$REPO_ROOT/contracts/progress/src/lib.rs"
 check_contract "scout_access"  "$REPO_ROOT/contracts/scout_access/src/lib.rs"
 
 echo ""
+echo "=== Error code drift check ==="
+echo ""
+
+check_error_codes "registration (ScoutChainError)" \
+  "$REPO_ROOT/contracts/registration/src/errors.rs" \
+  "### \`ScoutChainError\`"
+
+check_error_codes "verification (VerificationError)" \
+  "$REPO_ROOT/contracts/verification/src/errors.rs" \
+  "### \`VerificationError\`"
+
+check_error_codes "progress (ProgressError)" \
+  "$REPO_ROOT/contracts/progress/src/errors.rs" \
+  "### \`ProgressError\`"
+
+check_error_codes "scout_access (ScoutAccessError)" \
+  "$REPO_ROOT/contracts/scout_access/src/errors.rs" \
+  "### \`ScoutAccessError\`"
+
+echo ""
 if [[ $FAIL -ne 0 ]]; then
-  echo "FAIL: One or more public functions are not documented in docs/CONTRACT_REFERENCE.md"
-  echo "      Add an entry for each missing function and re-run this script."
+  echo "FAIL: One or more issues found — see above."
+  echo "      Update docs/CONTRACT_REFERENCE.md to match the Rust source and re-run."
   exit 1
 else
-  echo "PASS: All public contract functions are documented."
+  echo "PASS: All public functions and error codes are correctly documented."
 fi

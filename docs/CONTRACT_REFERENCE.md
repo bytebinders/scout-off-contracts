@@ -1400,6 +1400,7 @@ pub struct TrialOffer {
 | 12 | `SubscriptionDowngradeNotAllowed` | Downgrade attempted while subscription active |
 | 14 | `ProgressCallFailed` | Cross-contract `advance_level` failed |
 | 15 | `InvalidInput` | Zero or negative fee field in `FeeConfig` |
+| 16 | `NoFeesToWithdraw` | No accumulated fees available to withdraw |
 | 17 | `UpgradeTooSoon` | Subscribe called before minimum interval elapsed |
 
 ---
