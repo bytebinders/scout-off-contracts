@@ -20,6 +20,8 @@ use types::{DataKey, Milestone, Validator};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Generated client for the progress contract — used for cross-contract calls.
 // The progress contract must be deployed and its address registered via
 // `set_progress_contract` before `approve_milestone` can advance levels.
@@ -168,8 +170,8 @@ impl VerificationContract {
         let milestone = Milestone {
             player_id,
             validator: validator_wallet.clone(),
-            description,
-            evidence_hash,
+            description: description.clone(),
+            evidence_hash: evidence_hash.clone(),
             approved_at: env.ledger().timestamp(),
             ledger_sequence: env.ledger().sequence(),
         };
@@ -188,7 +190,14 @@ impl VerificationContract {
             .persistent()
             .set(&val_key, &(val_count.checked_add(1).expect("overflow")));
 
-        events::milestone_approved(&env, player_id, &validator_wallet);
+        events::milestone_approved(
+            &env,
+            player_id,
+            &validator_wallet,
+            next_index,
+            &description,
+            &evidence_hash,
+        );
 
         // Cross-contract call: advance the player's progress level.
         // This is a best-effort call — if the progress contract is not set
@@ -264,6 +273,11 @@ impl VerificationContract {
             .unwrap_or(false)
     }
 
+    /// Returns the deployed crate version (from Cargo.toml at build time).
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, CONTRACT_VERSION)
+    }
+
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
@@ -335,6 +349,12 @@ mod tests {
     fn test_health_false_before_initialize() {
         let (_env, client) = setup();
         assert!(!client.health());
+    }
+
+    #[test]
+    fn test_version() {
+        let (env, client) = setup();
+        assert_eq!(client.version(), String::from_str(&env, "0.1.0"));
     }
 
     #[test]

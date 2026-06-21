@@ -5,7 +5,9 @@ mod types;
 use errors::ProgressError;
 use types::{DataKey, ProgressEntry, ProgressLevel};
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
+
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[contract]
 pub struct ProgressContract;
@@ -139,6 +141,11 @@ impl ProgressContract {
             .unwrap_or(false)
     }
 
+    /// Returns the deployed crate version (from Cargo.toml at build time).
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, CONTRACT_VERSION)
+    }
+
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
@@ -191,7 +198,7 @@ impl ProgressContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::Address as _, Env, String};
 
     fn setup() -> (Env, ProgressContractClient<'static>) {
         let env = Env::default();
@@ -199,6 +206,12 @@ mod tests {
         let id = env.register_contract(None, ProgressContract);
         let client = ProgressContractClient::new(&env, &id);
         (env, client)
+    }
+
+    #[test]
+    fn test_version() {
+        let (env, client) = setup();
+        assert_eq!(client.version(), String::from_str(&env, "0.1.0"));
     }
 
     #[test]

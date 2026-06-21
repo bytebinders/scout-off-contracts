@@ -13,12 +13,19 @@ fi
 
 WASM_DIR="target/wasm32-unknown-unknown/release"
 
+if command -v sha256sum >/dev/null 2>&1; then
+  hash_wasm() { sha256sum "$1" | awk '{print $1}'; }
+else
+  hash_wasm() { shasum -a 256 "$1" | awk '{print $1}'; }
+fi
+
 echo "==> Building contracts..."
 cargo build --workspace --target wasm32-unknown-unknown --release
 
 CONTRACTS=(registration verification progress scout_access)
 
 declare -A CONTRACT_IDS
+declare -A CONTRACT_WASM_HASHES
 
 for name in "${CONTRACTS[@]}"; do
   wasm_name="scoutchain_${name}.wasm"
@@ -34,15 +41,21 @@ for name in "${CONTRACTS[@]}"; do
     --network "$NETWORK")
 
   CONTRACT_IDS[$name]="$id"
+  CONTRACT_WASM_HASHES[$name]=$(hash_wasm "$optimized")
   echo "    $name => $id"
+  echo "    $name wasm hash => ${CONTRACT_WASM_HASHES[$name]}"
 done
 
-# Write contract IDs to .env.contracts
+# Write contract IDs and WASM hashes to .env.contracts
 {
   echo "REGISTRATION_CONTRACT_ID=${CONTRACT_IDS[registration]}"
+  echo "REGISTRATION_CONTRACT_WASM_HASH=${CONTRACT_WASM_HASHES[registration]}"
   echo "VERIFICATION_CONTRACT_ID=${CONTRACT_IDS[verification]}"
+  echo "VERIFICATION_CONTRACT_WASM_HASH=${CONTRACT_WASM_HASHES[verification]}"
   echo "PROGRESS_CONTRACT_ID=${CONTRACT_IDS[progress]}"
+  echo "PROGRESS_CONTRACT_WASM_HASH=${CONTRACT_WASM_HASHES[progress]}"
   echo "SCOUT_ACCESS_CONTRACT_ID=${CONTRACT_IDS[scout_access]}"
+  echo "SCOUT_ACCESS_CONTRACT_WASM_HASH=${CONTRACT_WASM_HASHES[scout_access]}"
 } > .env.contracts
 
 echo ""

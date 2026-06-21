@@ -10,6 +10,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 // ~30 days at 5 s/ledger; extend when TTL drops below half that.
 const TRIAL_TTL_THRESHOLD: u32 = 259_200;
 const TRIAL_TTL_EXTEND_TO: u32 = 518_400;
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[contract]
 pub struct ScoutAccessContract;
@@ -320,6 +321,11 @@ impl ScoutAccessContract {
             .unwrap_or(false)
     }
 
+    /// Returns the deployed crate version (from Cargo.toml at build time).
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, CONTRACT_VERSION)
+    }
+
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
@@ -446,6 +452,12 @@ mod tests {
     fn test_initialize_and_health() {
         let (_, _, _, _, client) = setup();
         assert!(client.health());
+    }
+
+    #[test]
+    fn test_version() {
+        let (env, _, _, _, client) = setup();
+        assert_eq!(client.version(), String::from_str(&env, "0.1.0"));
     }
 
     #[test]
