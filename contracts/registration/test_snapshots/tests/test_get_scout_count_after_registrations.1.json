@@ -149,6 +149,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "verified"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "wallet"
                     },
                     "val": {
@@ -209,6 +217,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "verified"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "wallet"
                     },
                     "val": {
@@ -265,6 +281,14 @@
                     },
                     "val": {
                       "u64": "3"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "verified"
+                    },
+                    "val": {
+                      "bool": false
                     }
                   },
                   {

@@ -284,7 +284,7 @@ scoutchain-contracts/
 
 ```bash
 cp .env.example .env
-# Fill in DEPLOYER_SECRET, ADMIN_ADDRESS, XLM_TOKEN_ADDRESS
+# Fill in all six environment variables from .env.example
 ./scripts/setup-testnet.sh
 ```
 
@@ -306,7 +306,7 @@ rustup target add wasm32-unknown-unknown
 
 ```bash
 cp .env.example .env
-# Fill in DEPLOYER_SECRET, ADMIN_ADDRESS, XLM_TOKEN_ADDRESS
+# Fill in all six required environment variables
 ```
 
 #### 3. Build and deploy
@@ -415,16 +415,16 @@ psql $DATABASE_URL -f migrations/001_initial_schema.sql
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in the three required values before running any script:
+Copy `.env.example` to `.env` and fill in all required values before running any script:
 
 | Variable | Description |
 |----------|-------------|
 | `DEPLOYER_SECRET` | Stellar secret key used to deploy and invoke contracts |
 | `ADMIN_ADDRESS` | Stellar G-address that will own all four contracts |
 | `XLM_TOKEN_ADDRESS` | Native XLM token contract address on the target network |
-| `STELLAR_NETWORK` | `testnet` or `mainnet` (default: `testnet`) |
-| `HORIZON_URL` | Stellar Horizon endpoint |
-| `SOROBAN_RPC_URL` | Soroban RPC endpoint |
+| `STELLAR_NETWORK` | Target network: `testnet` or `mainnet` (default: `testnet`) |
+| `HORIZON_URL` | Stellar Horizon endpoint for the target network |
+| `SOROBAN_RPC_URL` | Soroban RPC endpoint for the target network |
 
 Network-specific addresses are in `config/testnet.json` and `config/mainnet.json`.
 
@@ -436,6 +436,15 @@ VERIFICATION_CONTRACT_ID=
 PROGRESS_CONTRACT_ID=
 SCOUT_ACCESS_CONTRACT_ID=
 ```
+
+### Mainnet Deployment Safety
+
+When deploying to mainnet, **always verify** `config/mainnet.json` has been updated with real values before running `./scripts/deploy.sh mainnet`. The deployment script will reject the operation if placeholder values remain. Additionally:
+
+1. Test the full deployment flow on testnet first
+2. Verify all addresses in `.env` are correct for mainnet
+3. Confirm `ADMIN_ADDRESS` is the intended account — ownership cannot be transferred after initialization
+4. Double-check the `XLM_TOKEN_ADDRESS` matches the mainnet address (not testnet)
 
 ## Testing
 
@@ -520,19 +529,78 @@ Frontend and backend dependencies live in their respective repos (`scoutchain-fr
 
 ## Error Codes
 
-| Code | Error | Description | Common Cause | Resolution |
-|------|-------|-------------|--------------|------------|
-| 1 | AlreadyInitialized | Contract already initialized | Calling `initialize` twice | No action needed; contract is ready |
-| 2 | NotInitialized | Contract not initialized | Operations before setup | Admin must call `initialize` first |
-| 3 | PlayerNotFound | Player ID does not exist | Invalid player_id | Verify the player_id from registration transaction |
-| 4 | ValidatorNotAuthorized | Caller is not a registered validator | Unregistered account approving milestone | Admin must register the validator first |
-| 5 | InvalidProgressTransition | Level transition is not allowed | Skipping levels or going backwards | Follow the valid transition table |
-| 6 | ScoutNotSubscribed | Scout has no active subscription | Accessing talent pool without subscription | Call `subscribe` with valid tier and fee |
-| 7 | InsufficientFee | Payment amount below required fee | Underpaying contact fee | Check current fee via `get_fee_config` |
-| 8 | AlreadyRegistered | Wallet already has a profile | Duplicate registration | Use existing player_id |
-| 9 | ContractPaused | Contract is paused | Emergency circuit breaker active | Monitor official channels; wait for admin to unpause |
-| 10 | Unauthorized | Caller is not authorized | Wrong account for admin operation | Confirm you are using the correct Stellar account |
-| 11 | Overflow | Arithmetic overflow in fee calculation | Extremely large XLM amount | Use amounts within safe i128 range |
+Each contract defines its own error enum. The same numeric code can mean different things in different contracts — always check which contract you are calling. See [`docs/CONTRACT_REFERENCE.md`](docs/CONTRACT_REFERENCE.md) for the full per-contract reference.
+
+### `ScoutChainError` (registration contract)
+
+| Code | Variant | Common Cause | Resolution |
+|------|---------|--------------|------------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once | No action; contract is already ready |
+| 2 | `NotInitialized` | Operation before `initialize` | Admin must call `initialize` first |
+| 3 | `PlayerNotFound` | Invalid `player_id` | Verify the `player_id` from the registration transaction |
+| 4 | `ValidatorNotAuthorized` | Unregistered account approving milestone | Admin must register the validator first |
+| 5 | `InvalidProgressTransition` | Skipping or reversing a level | Follow valid 0→1→2→3 transition order |
+| 6 | `ScoutNotSubscribed` | Scout has no subscription | Call `subscribe` with a valid tier and fee |
+| 7 | `InsufficientFee` | Underpaying contact fee | Check current fee via `get_fee_config` |
+| 8 | `AlreadyRegistered` | Wallet already has a profile for this role | Use the existing profile |
+| 9 | `ContractPaused` | Circuit breaker is active | Wait for admin to call `unpause_contract` |
+| 10 | `Unauthorized` | Wrong account for a privileged operation | Confirm you are using the correct Stellar account |
+| 11 | `Overflow` | Counter or fee arithmetic overflowed | Use amounts within safe range |
+| 12 | `ScoutNotFound` | Invalid `scout_id` | Verify the `scout_id` from the registration transaction |
+| 13 | `InvalidInput` | Field too long, bad hash count, or empty value | Check field length limits in the function docs |
+
+### `VerificationError` (verification contract)
+
+| Code | Variant | Common Cause | Resolution |
+|------|---------|--------------|------------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once | No action; contract is already ready |
+| 2 | `NotInitialized` | Operation before `initialize` | Admin must call `initialize` first |
+| 3 | `ContractPaused` | Circuit breaker is active | Wait for admin to call `unpause_contract` |
+| 4 | `Unauthorized` | Wrong account for a privileged operation | Confirm you are using the correct Stellar account |
+| 5 | `ValidatorNotFound` | Wallet not in validator registry | Admin must call `register_validator` first |
+| 6 | `ValidatorInactive` | Validator has been revoked | Contact admin to re-activate |
+| 7 | `ValidatorAlreadyRegistered` | Wallet already registered as validator | Use the existing validator record |
+| 8 | `PlayerNotFound` | Invalid `player_id` | Verify the `player_id` from the registration contract |
+| 9 | `InvalidInput` | Bad evidence hash or credentials too long | Check CID format and byte limits |
+| 10 | `ReasonTooLong` | Revocation reason exceeds 128 bytes | Shorten the reason string |
+| 11 | `AlreadyConfigured` | `set_progress_contract` called twice | Use `update_progress_contract` for re-wiring |
+| 12 | `ProgressCallFailed` | Cross-contract `advance_level` failed | Verify the progress contract is deployed and wired |
+| 13 | `Overflow` | Milestone counter overflowed | Contact admin |
+| 14 | `MilestoneNotFound` | Index out of range | Verify index against `get_milestone_count` |
+
+### `ProgressError` (progress contract)
+
+| Code | Variant | Common Cause | Resolution |
+|------|---------|--------------|------------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once | No action; contract is already ready |
+| 2 | `NotInitialized` | Operation before `initialize` | Admin must call `initialize` first |
+| 3 | `ContractPaused` | Circuit breaker is active | Wait for admin to call `unpause_contract` |
+| 4 | `Unauthorized` | Wrong account for a privileged operation | Confirm you are using the correct Stellar account |
+| 5 | `InvalidProgressTransition` | Level skip or reversal attempted | Follow valid 0→1→2→3 transition order |
+| 6 | `AlreadyAtMaxLevel` | Player is already at `EliteTier` | No further advancement possible |
+| 7 | `PlayerNotFound` | History index out of range | Verify index against `get_history_count` |
+| 8 | `Overflow` | History counter overflowed | Contact admin |
+
+### `ScoutAccessError` (scout_access contract)
+
+| Code | Variant | Common Cause | Resolution |
+|------|---------|--------------|------------|
+| 1 | `AlreadyInitialized` | `initialize` called more than once | No action; contract is already ready |
+| 2 | `NotInitialized` | Operation before `initialize` | Admin must call `initialize` first |
+| 3 | `ContractPaused` | Circuit breaker is active | Wait for admin to call `unpause_contract` |
+| 4 | `Unauthorized` | Wrong account or non-Elite tier for trial offer | Confirm account and subscription tier |
+| 5 | `InsufficientFee` | Zero accumulated fees on withdrawal | Ensure fees have been collected before withdrawing |
+| 6 | `ScoutNotSubscribed` | No subscription record found | Call `subscribe` with a valid tier and fee |
+| 7 | `SubscriptionExpired` | Subscription past `expires_at` | Renew subscription via `subscribe` |
+| 8 | `AlreadyContacted` | Duplicate `pay_to_contact` for same player | Contact is already unlocked |
+| 9 | `InvalidTier` | Unknown subscription tier | Use `Basic`, `Pro`, or `Elite` |
+| 10 | `Overflow` | Fee accumulation arithmetic overflowed | Contact admin |
+| 11 | `TrialOfferNotFound` | Index out of range | Verify index against `get_trial_count` |
+| 12 | `SubscriptionDowngradeNotAllowed` | Downgrade attempted while subscription is active | Wait for current subscription to expire |
+| 14 | `ProgressCallFailed` | Cross-contract `advance_level` failed | Verify the progress contract is deployed and wired |
+| 15 | `InvalidInput` | Zero or negative fee field in `FeeConfig` | All fee fields and `sub_duration_secs` must be > 0 |
+| 16 | `NoFeesToWithdraw` | No accumulated fees to withdraw | Ensure fees have been collected before withdrawing |
+| 17 | `UpgradeTooSoon` | `subscribe` called before minimum interval elapsed | Wait at least 1 hour between subscribe calls |
 
 ## Events
 

@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, String, Vec};
 
-pub use scoutchain_shared_types::ProgressLevel;
+pub use scoutchain_shared_types::{ContractHealth, ProgressLevel};
 
 /// Basic player vitals stored on-chain
 #[contracttype]
@@ -43,20 +43,33 @@ pub struct ScoutProfile {
     pub scout_id: u64,
     pub wallet: Address,
     pub region: String,
+    pub verified: bool,
     pub registered_at: u64,
 }
 
-/// Storage keys
+/// Storage keys for contract state
 #[contracttype]
 pub enum DataKey {
+    /// Admin wallet address authorized to manage validators and fees
     Admin,
+    /// Boolean flag indicating if contract has been initialized
     Initialized,
+    /// Boolean flag indicating if contract is paused (circuit breaker)
     Paused,
+    /// Counter for generating unique player IDs
     PlayerCounter,
+    /// Counter for generating unique scout IDs
     ScoutCounter,
+    /// Full player profile stored by player_id
     Player(u64),
-    /// Index: wallet → player_id
+    /// Index mapping player wallet address to player_id for fast lookup
     PlayerByWallet(Address),
+    /// Full scout profile stored by scout_id
     Scout(u64),
+    /// Index mapping scout wallet address to scout_id for fast lookup
     ScoutByWallet(Address),
+    /// Index of all player IDs for efficient filtering and iteration
+    PlayerIndex,
+    /// Address of the progress contract allowed to call set_player_level
+    ProgressContract,
 }

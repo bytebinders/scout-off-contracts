@@ -59,4 +59,20 @@ stellar contract invoke \
   --progress_contract "$PROGRESS_CONTRACT_ID"
 
 echo ""
+echo "==> Querying deployed contract versions..."
+for entry in \
+  "registration:$REGISTRATION_CONTRACT_ID" \
+  "verification:$VERIFICATION_CONTRACT_ID" \
+  "progress:$PROGRESS_CONTRACT_ID" \
+  "scout_access:$SCOUT_ACCESS_CONTRACT_ID"; do
+  name="${entry%%:*}"
+  id="${entry#*:}"
+  version=$(stellar contract invoke \
+    --id "$id" \
+    --network "$NETWORK" \
+    -- version)
+  echo "    $name version => $version"
+done
+
+echo ""
 echo "==> All contracts initialized and wired."
