@@ -24,3 +24,9 @@ Thumbs.db
 
 # Pull-request drafts
 pr-*.md
+
+# Bindings — generated src/ and compiled dist/ are not committed.
+# Only package.json and tsconfig.json scaffolds are tracked.
+bindings/*/src/
+bindings/*/dist/
+bindings/*/node_modules/

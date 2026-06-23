@@ -4,6 +4,7 @@
 set -euo pipefail
 
 NETWORK="${1:-testnet}"
+# shellcheck source=/dev/null
 source .env.contracts
 
 ADMIN="${ADMIN_ADDRESS:?Set ADMIN_ADDRESS}"

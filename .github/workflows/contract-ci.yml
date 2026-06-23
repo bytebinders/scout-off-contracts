@@ -52,5 +52,171 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
       - name: Format check
         run: cargo fmt --all -- --check
+
+      - name: Shell script lint (shellcheck)
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/deploy.sh
+          shellcheck scripts/initialize.sh
+          shellcheck scripts/setup-testnet.sh
+          shellcheck scripts/generate-bindings.sh
+          shellcheck scripts/check-bindings.sh
+          shellcheck testnet/seed.sh
       - name: Docs completeness check
         run: bash scripts/check-docs.sh
+      - name: Validate bindings package.json templates
+        run: bash scripts/check-bindings.sh
+
+  bindings-smoke-test:
+    name: Bindings smoke-test (local sandbox)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm32v1-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Stellar CLI
+        run: |
+          curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+          echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build WASM contracts
+        run: cargo build --workspace --target wasm32v1-none --release
+
+      - name: Start Soroban local sandbox
+        run: |
+          docker run -d \
+            --name stellar-local \
+            -p 8000:8000 \
+            stellar/quickstart:testing \
+            --local
+          # Poll getLatestLedger until the DB is initialised and returns
+          # a real ledger sequence (not just an open TCP port).
+          echo "Waiting for Soroban RPC to be ready..."
+          for i in $(seq 1 60); do
+            LEDGER=$(curl -sf http://localhost:8000/soroban/rpc \
+              -X POST \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' \
+              2>/dev/null \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',{}).get('sequence',0))" \
+              2>/dev/null || echo 0)
+            if [ "${LEDGER:-0}" -gt 0 ] 2>/dev/null; then
+              echo "RPC ready — ledger ${LEDGER} after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+          if [ "${LEDGER:-0}" -eq 0 ] 2>/dev/null; then
+            echo "ERROR: Soroban RPC never became ready"
+            docker logs stellar-local
+            exit 1
+          fi
+
+      - name: Register local network with Stellar CLI
+        run: |
+          stellar network add local \
+            --rpc-url http://localhost:8000/soroban/rpc \
+            --network-passphrase "Standalone Network ; February 2017"
+
+      - name: Generate a local sandbox identity
+        run: |
+          stellar keys generate ci-deployer --network local --fund
+          echo "ADMIN_ADDRESS=$(stellar keys address ci-deployer)" >> "$GITHUB_ENV"
+
+      - name: Deploy all contracts to local sandbox
+        run: |
+          set -euo pipefail
+          WASM=target/wasm32v1-none/release
+
+          deploy_one() {
+            local name="$1"
+            local wasm_src="$WASM/scoutchain_${name}.wasm"
+            local wasm_opt="$WASM/scoutchain_${name}.optimized.wasm"
+            # Use the current non-deprecated build+optimize path
+            stellar contract build \
+              --package "scoutchain-${name//_/-}" \
+              --optimize \
+              --target-dir target \
+              2>/dev/null \
+              || stellar contract optimize \
+                   --wasm "$wasm_src" \
+                   --wasm-out "$wasm_opt" \
+              || cp "$wasm_src" "$wasm_opt"
+            stellar contract deploy \
+              --wasm "$wasm_opt" \
+              --source ci-deployer \
+              --network local
+          }
+
+          REG_ID=$(deploy_one registration)
+          VER_ID=$(deploy_one verification)
+          PRG_ID=$(deploy_one progress)
+          SCO_ID=$(deploy_one scout_access)
+
+          [ -n "$REG_ID" ] || { echo "ERROR: empty registration ID"; exit 1; }
+          [ -n "$VER_ID" ] || { echo "ERROR: empty verification ID"; exit 1; }
+          [ -n "$PRG_ID" ] || { echo "ERROR: empty progress ID"; exit 1; }
+          [ -n "$SCO_ID" ] || { echo "ERROR: empty scout_access ID"; exit 1; }
+
+          {
+            echo "REGISTRATION_CONTRACT_ID=$REG_ID"
+            echo "VERIFICATION_CONTRACT_ID=$VER_ID"
+            echo "PROGRESS_CONTRACT_ID=$PRG_ID"
+            echo "SCOUT_ACCESS_CONTRACT_ID=$SCO_ID"
+          } > .env.contracts
+
+          echo "==> Deployed contract IDs:"
+          cat .env.contracts
+
+      - name: Generate TypeScript bindings
+        run: bash scripts/generate-bindings.sh local
+
+      - name: Verify bindings output structure
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            dir="bindings/$pkg"
+            echo "Checking $dir..."
+            [ -f "$dir/src/index.ts" ] \
+              || { echo "ERROR: $dir/src/index.ts not found — generation failed"; exit 1; }
+            echo "  OK: src/index.ts present"
+          done
+
+      - name: Build all binding packages
+        run: |
+          set -euo pipefail
+          for pkg in registration verification progress scout_access; do
+            echo "==> Building bindings/$pkg..."
+            (cd "bindings/$pkg" && npm install && npm run build)
+            [ -f "bindings/$pkg/dist/index.js" ] \
+              || { echo "ERROR: bindings/$pkg/dist/index.js not produced"; exit 1; }
+            echo "  OK: dist/index.js present"
+          done
+
+      - name: Stop local sandbox
+        if: always()
+        run: docker stop stellar-local && docker rm stellar-local || true
+
+      - name: Docs completeness check
+        run: bash scripts/check-docs.sh
+
