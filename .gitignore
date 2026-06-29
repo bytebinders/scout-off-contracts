@@ -9,6 +9,7 @@ Cargo.lock
 
 # Optimized WASM outputs
 *.optimized.wasm
+*.wasm
 
 # OS
 .DS_Store
@@ -18,6 +19,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+*.swo
 
 # Kiro IDE
 .kiro/
@@ -30,3 +32,15 @@ pr-*.md
 bindings/*/src/
 bindings/*/dist/
 bindings/*/node_modules/
+
+# Test snapshots (Soroban / insta crate)
+**/__snapshots__/
+*.snap
+*.snap.new
+
+# Generated / temporary files
+*.bak
+*.orig
+*.log
+*.tmp
+.env.contracts
