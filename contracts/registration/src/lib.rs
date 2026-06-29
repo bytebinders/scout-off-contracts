@@ -1257,109 +1257,101 @@ fn test_upgrade_preserves_admin() {
     }
 
     // -------------------------------------------------------------------------
-    // Issue #418: filter_players with position filter only (empty region)
+    // Issue #419: filter_players with region filter only (empty position)
     // -------------------------------------------------------------------------
 
-    /// Register three players with distinct positions across different regions.
-    /// Call filter_players with only the position set (empty region) and assert
-    /// exactly the goalkeeper is returned.
+    /// Register players across two distinct regions.
+    /// filter_players with only a region set (empty position) must return only
+    /// players from that region and exclude all others.
     #[test]
-    fn test_filter_players_position_only_returns_correct_player() {
+    fn test_filter_players_region_only_returns_correct_players() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
 
-        // Player 1: Goalkeeper in West Africa
-        let wallet1 = Address::generate(&env);
-        let vitals1 = PlayerVitals {
-            age: 19,
-            position: String::from_str(&env, "Goalkeeper"),
-            region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Ghana"),
-        };
-        let id_gk = client.register_player(&wallet1, &vitals1, &hashes);
-
-        // Player 2: Midfielder in South America
-        let wallet2 = Address::generate(&env);
-        let vitals2 = PlayerVitals {
-            age: 22,
-            position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "South America"),
-            nationality: String::from_str(&env, "Brazil"),
-        };
-        client.register_player(&wallet2, &vitals2, &hashes);
-
-        // Player 3: Forward in Europe
-        let wallet3 = Address::generate(&env);
-        let vitals3 = PlayerVitals {
-            age: 20,
-            position: String::from_str(&env, "Forward"),
-            region: String::from_str(&env, "Europe"),
-            nationality: String::from_str(&env, "France"),
-        };
-        client.register_player(&wallet3, &vitals3, &hashes);
-
-        // Filter: position = Goalkeeper, no region constraint (empty string)
-        let result = client.filter_players(
-            &String::from_str(&env, ""),           // no region filter
-            &String::from_str(&env, "Goalkeeper"), // position filter only
-            &ProgressLevel::Unverified,
-            &0u64,
-            &20u32,
-        );
-
-        assert_eq!(result.profiles.len(), 1, "exactly one goalkeeper expected");
-        assert_eq!(
-            result.profiles.get(0).unwrap().player_id,
-            id_gk,
-            "returned player must be the goalkeeper"
-        );
-        assert_eq!(
-            result.profiles.get(0).unwrap().vitals.position,
-            String::from_str(&env, "Goalkeeper")
-        );
-        assert_eq!(result.next_cursor, 0); // no more pages
-    }
-
-    /// Non-matching position with empty region returns an empty result.
-    #[test]
-    fn test_filter_players_position_only_no_match_returns_empty() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let hashes = vec![&env, String::from_str(&env, "QmTest")];
-
-        // Register two players — neither is a Defender
+        // Region A players (West Africa)
         let wallet1 = Address::generate(&env);
         let vitals1 = PlayerVitals {
             age: 18,
             position: String::from_str(&env, "Forward"),
             region: String::from_str(&env, "West Africa"),
-            nationality: String::from_str(&env, "Nigeria"),
+            nationality: String::from_str(&env, "Ghana"),
         };
-        client.register_player(&wallet1, &vitals1, &hashes);
+        let id_wa1 = client.register_player(&wallet1, &vitals1, &hashes);
 
         let wallet2 = Address::generate(&env);
         let vitals2 = PlayerVitals {
-            age: 21,
+            age: 20,
             position: String::from_str(&env, "Midfielder"),
-            region: String::from_str(&env, "Europe"),
-            nationality: String::from_str(&env, "Spain"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Nigeria"),
         };
-        client.register_player(&wallet2, &vitals2, &hashes);
+        let id_wa2 = client.register_player(&wallet2, &vitals2, &hashes);
 
+        // Region B player (Europe) — must be excluded
+        let wallet3 = Address::generate(&env);
+        let vitals3 = PlayerVitals {
+            age: 22,
+            position: String::from_str(&env, "Defender"),
+            region: String::from_str(&env, "Europe"),
+            nationality: String::from_str(&env, "Germany"),
+        };
+        client.register_player(&wallet3, &vitals3, &hashes);
+
+        // Filter: region = West Africa, no position constraint (empty string)
         let result = client.filter_players(
-            &String::from_str(&env, ""),         // no region
-            &String::from_str(&env, "Defender"), // no one has this position
+            &String::from_str(&env, "West Africa"), // region filter only
+            &String::from_str(&env, ""),             // no position filter
             &ProgressLevel::Unverified,
             &0u64,
             &20u32,
         );
 
-        assert_eq!(result.profiles.len(), 0, "no defenders registered — result must be empty");
+        assert_eq!(result.profiles.len(), 2, "two West Africa players expected");
+
+        let returned_ids: soroban_sdk::Vec<u64> = {
+            let mut v = soroban_sdk::Vec::new(&env);
+            for i in 0..result.profiles.len() {
+                v.push_back(result.profiles.get(i).unwrap().player_id);
+            }
+            v
+        };
+        assert!(returned_ids.contains(&id_wa1), "id_wa1 must be in results");
+        assert!(returned_ids.contains(&id_wa2), "id_wa2 must be in results");
+        assert_eq!(result.next_cursor, 0);
+    }
+
+    /// filter_players with a region that has no registered players returns empty.
+    #[test]
+    fn test_filter_players_region_only_empty_region_returns_empty() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+
+        // All players are in West Africa
+        let wallet1 = Address::generate(&env);
+        let vitals1 = PlayerVitals {
+            age: 19,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Senegal"),
+        };
+        client.register_player(&wallet1, &vitals1, &hashes);
+
+        // Filter by a region that has no players
+        let result = client.filter_players(
+            &String::from_str(&env, "East Asia"), // region with no players
+            &String::from_str(&env, ""),           // no position filter
+            &ProgressLevel::Unverified,
+            &0u64,
+            &20u32,
+        );
+
+        assert_eq!(result.profiles.len(), 0, "no players in East Asia — must be empty");
         assert_eq!(result.next_cursor, 0);
     }
 

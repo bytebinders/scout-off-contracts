@@ -155,3 +155,69 @@ fn test_log_trial_offer_already_at_max_level_is_silent() {
     assert_eq!(h.scout_access.get_trial_count(&player_id), 2);
     assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
 }
+
+/// Issue #425 — TrialCounter increments correctly across multiple log_trial_offer calls.
+///
+/// Two different Elite scouts each log one trial offer for the same player.
+/// Using distinct scouts avoids the 24-hour per-(scout, player) cooldown so
+/// both offers can be recorded in the same test environment without advancing
+/// the ledger timestamp.
+///
+/// Acceptance criteria:
+///   - First log_trial_offer returns trial index 1
+///   - Second log_trial_offer (different scout) returns trial index 2
+///   - get_trial_offer(player_id, 1) returns the first offer with correct scout
+///   - get_trial_offer(player_id, 2) returns the second offer with correct scout
+///   - get_trial_count returns 2 after both calls
+#[test]
+fn test_trial_counter_increments_across_two_scouts() {
+    let h = setup();
+    let player_id: u64 = 42;
+
+    // Advance the player to PerformanceMilestones (level 2) so the first
+    // log_trial_offer can advance them to EliteTier via the progress contract.
+    advance_player(&h, player_id, 2);
+    assert_eq!(
+        h.progress.get_level(&player_id),
+        ProgressLevel::PerformanceMilestones,
+    );
+
+    // Scout A — first trial offer
+    let scout_a = Address::generate(&h.env);
+    subscribe_elite(&h, &scout_a);
+
+    let hash_a = String::from_str(&h.env, "QmTrialOfferScoutAHash1234567");
+    let index_a = h.scout_access.log_trial_offer(&scout_a, &player_id, &hash_a);
+
+    // First call must return index 1
+    assert_eq!(index_a, 1, "first trial offer must be assigned index 1");
+    // Player advanced to EliteTier by the cross-contract call
+    assert_eq!(h.progress.get_level(&player_id), ProgressLevel::EliteTier);
+    // Counter is now 1
+    assert_eq!(h.scout_access.get_trial_count(&player_id), 1);
+
+    // Scout B — second trial offer for the same player.
+    // A different scout is used to avoid the 24-hour per-(scout, player) cooldown.
+    let scout_b = Address::generate(&h.env);
+    subscribe_elite(&h, &scout_b);
+
+    let hash_b = String::from_str(&h.env, "QmTrialOfferScoutBHash9876543");
+    let index_b = h.scout_access.log_trial_offer(&scout_b, &player_id, &hash_b);
+
+    // Second call must return index 2
+    assert_eq!(index_b, 2, "second trial offer must be assigned index 2");
+    // Counter is now 2
+    assert_eq!(h.scout_access.get_trial_count(&player_id), 2);
+
+    // Retrieve the first offer and verify its fields
+    let offer_1 = h.scout_access.get_trial_offer(&player_id, &1u32);
+    assert_eq!(offer_1.player_id, player_id);
+    assert_eq!(offer_1.scout, scout_a);
+    assert_eq!(offer_1.details_hash, hash_a);
+
+    // Retrieve the second offer and verify its fields
+    let offer_2 = h.scout_access.get_trial_offer(&player_id, &2u32);
+    assert_eq!(offer_2.player_id, player_id);
+    assert_eq!(offer_2.scout, scout_b);
+    assert_eq!(offer_2.details_hash, hash_b);
+}
