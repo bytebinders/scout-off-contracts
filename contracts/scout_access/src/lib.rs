@@ -615,6 +615,28 @@ impl ScoutAccessContract {
         count
     }
 
+    /// Return all trial offers for a given player in ascending index order (1..=N).
+    /// Returns an empty Vec for a player with no trial offers.
+    pub fn get_player_trial_offers(env: Env, player_id: u64) -> soroban_sdk::Vec<TrialOffer> {
+        Self::bump_instance_ttl(&env);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TrialCounter(player_id))
+            .unwrap_or(0u32);
+        let mut offers: soroban_sdk::Vec<TrialOffer> = soroban_sdk::Vec::new(&env);
+        for i in 1..=count {
+            if let Some(offer) = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TrialOffer(player_id, i))
+            {
+                offers.push_back(offer);
+            }
+        }
+        offers
+    }
+
     /// Return all trial offers for a player in a single call.
     /// Bounded at 20 to prevent gas exhaustion. Returns empty Vec for no offers.
     pub fn get_all_trial_offers(env: Env, player_id: u64) -> soroban_sdk::Vec<TrialOffer> {

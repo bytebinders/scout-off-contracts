@@ -450,6 +450,11 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .set(&DataKey::HistoryEntry(player_id, next_index), &entry);
+        env.storage().persistent().extend_ttl(
+            &DataKey::HistoryEntry(player_id, next_index),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
         env.storage().persistent().set(&history_key, &next_index);
         env.storage().persistent().extend_ttl(
             &history_key,
@@ -590,6 +595,32 @@ mod tests {
         assert_eq!(entry.new_level, ProgressLevel::VerifiedIdentity);
         assert_eq!(entry.updated_by, validator);
         assert_eq!(entry.milestone_ref, milestone);
+    }
+
+    // #447: HistoryEntry TTL is extended on write — entry must be readable after
+    // simulated ledger advancement past the default (un-bumped) TTL.
+    #[test]
+    fn test_history_entry_ttl_extended_after_write() {
+        let (env, client, validator) = setup();
+
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100_000;
+            l.min_persistent_entry_ttl = 500;
+            l.max_entry_ttl = 600_000;
+        });
+
+        let player_id = 55u64;
+        client.advance_level(&validator, &player_id, &1u32);
+
+        // Advance ledger past what the default un-bumped TTL would be.
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100_000 + 1_000;
+        });
+
+        // Entry must still be readable — TTL was extended on write.
+        let entry = client.get_history_entry(&player_id, &1u32);
+        assert_eq!(entry.old_level, ProgressLevel::Unverified);
+        assert_eq!(entry.new_level, ProgressLevel::VerifiedIdentity);
     }
 
     #[test]
