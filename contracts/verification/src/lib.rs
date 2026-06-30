@@ -17,7 +17,7 @@ mod events;
 mod types;
 
 use errors::VerificationError;
-use types::{ContractHealth, DataKey, GlobalMilestoneEntry, GlobalMilestoneIndexPage, Milestone, Validator, ValidatorStatus};
+use types::{ContractHealth, DataKey, GlobalMilestoneEntry, GlobalMilestoneIndexPage, Milestone, MilestoneDispute, Validator, ValidatorStatus};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
@@ -466,6 +466,22 @@ impl VerificationContract {
                 .ok_or(VerificationError::Overflow)?),
         );
 
+        // Update ValidatorPlayers index: record that this validator has approved
+        // a milestone for player_id. Duplicates are skipped so each player_id
+        // appears at most once per validator.
+        let vp_index_key = DataKey::ValidatorPlayers(validator_wallet.clone());
+        let mut vp_players: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&vp_index_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !vp_players.contains(&player_id) {
+            vp_players.push_back(player_id);
+            env.storage()
+                .persistent()
+                .set(&vp_index_key, &vp_players);
+        }
+
         // Increment global total milestone count
         let total: u32 = env
             .storage()
@@ -555,6 +571,16 @@ impl VerificationContract {
             .persistent()
             .get(&DataKey::ValidatorMilestoneCount(wallet))
             .unwrap_or(0u32)
+    }
+
+    /// Return all distinct player IDs for which the given validator has approved
+    /// at least one milestone. The list is accumulated on every `approve_milestone`
+    /// call and each player_id appears at most once.
+    pub fn get_validator_players(env: Env, wallet: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ValidatorPlayers(wallet))
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     pub fn get_total_milestone_count(env: Env) -> u32 {
@@ -775,6 +801,87 @@ mod tests {
     const VALID_CID_V0: &str = "QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB";
     // A valid CIDv1 (>= 59 chars starting with "bafy").
     const VALID_CID_V1: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+
+    // -------------------------------------------------------------------------
+    // Issue #466: ValidatorPlayers index tests
+    // -------------------------------------------------------------------------
+
+    /// ValidatorPlayers(wallet) index is updated on every approve_milestone call.
+    /// get_validator_players returns all player IDs for the given validator.
+    /// Duplicate player IDs are not added to the index.
+    #[test]
+    fn test_get_validator_players_index_accuracy() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Unknown validator returns empty vec
+        let unknown = Address::generate(&env);
+        assert_eq!(client.get_validator_players(&unknown).len(), 0);
+
+        // Approve milestones for players 1, 2, 3
+        client.approve_milestone(&validator, &1u64, &String::from_str(&env, "m1"), &String::from_str(&env, VALID_CID_V0));
+        client.approve_milestone(&validator, &2u64, &String::from_str(&env, "m2"), &String::from_str(&env, VALID_CID_V0));
+        client.approve_milestone(&validator, &3u64, &String::from_str(&env, "m3"), &String::from_str(&env, VALID_CID_V0));
+
+        let players = client.get_validator_players(&validator);
+        assert_eq!(players.len(), 3);
+        assert!(players.contains(&1u64));
+        assert!(players.contains(&2u64));
+        assert!(players.contains(&3u64));
+    }
+
+    /// Approving a second milestone for the same player must NOT add a duplicate
+    /// player_id to the ValidatorPlayers index.
+    #[test]
+    fn test_get_validator_players_no_duplicates() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+
+        // Approve two milestones for the same player
+        client.approve_milestone(&validator, &1u64, &String::from_str(&env, "m1"), &String::from_str(&env, VALID_CID_V0));
+        client.approve_milestone(&validator, &1u64, &String::from_str(&env, "m2"), &String::from_str(&env, VALID_CID_V1));
+
+        // player 1 must appear exactly once
+        let players = client.get_validator_players(&validator);
+        assert_eq!(players.len(), 1);
+        assert!(players.contains(&1u64));
+    }
+
+    /// Two validators each approve milestones for different players.
+    /// Each validator's index must be independent and accurate.
+    #[test]
+    fn test_get_validator_players_two_validators_independent() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let v1 = Address::generate(&env);
+        let v2 = Address::generate(&env);
+        client.register_validator(&v1, &String::from_str(&env, "Coach A"));
+        client.register_validator(&v2, &String::from_str(&env, "Coach B"));
+
+        client.approve_milestone(&v1, &1u64, &String::from_str(&env, "m1"), &String::from_str(&env, VALID_CID_V0));
+        client.approve_milestone(&v1, &2u64, &String::from_str(&env, "m2"), &String::from_str(&env, VALID_CID_V0));
+        client.approve_milestone(&v2, &3u64, &String::from_str(&env, "m3"), &String::from_str(&env, VALID_CID_V0));
+
+        let v1_players = client.get_validator_players(&v1);
+        assert_eq!(v1_players.len(), 2);
+        assert!(v1_players.contains(&1u64));
+        assert!(v1_players.contains(&2u64));
+        assert!(!v1_players.contains(&3u64));
+
+        let v2_players = client.get_validator_players(&v2);
+        assert_eq!(v2_players.len(), 1);
+        assert!(v2_players.contains(&3u64));
+    }
 
     #[test]
     fn test_validator_milestone_count() {
