@@ -14,6 +14,7 @@ Every `pub fn` in every `#[contractimpl]` block is documented here.
 - [Shared Types](#shared-types)
 - [Error Codes](#error-codes)
 - [Events](#events)
+- [Glossary](GLOSSARY.md)
 
 ---
 
@@ -1063,6 +1064,29 @@ stellar contract invoke --id $PROGRESS_CONTRACT_ID -- version
 Handles scout subscriptions, pay-to-contact flows, and trial offer logging.
 Fees are collected in XLM (stroops) and held in the contract until admin
 withdrawal.
+
+### `FeeConfig` Struct
+
+Primary configuration struct controlling all subscription and contact fees.
+Passed to `initialize` and `update_fee_config`. All fields must be strictly
+greater than zero; either function returns `InvalidInput` otherwise.
+
+| Field | Rust Type | Unit | Valid Range | Typical Example |
+|---|---|---|---|---|
+| `contact_fee_stroops` | `i128` | stroops (1 XLM = 10 000 000 stroops) | > 0 | `100000` (0.01 XLM) |
+| `basic_sub_stroops` | `i128` | stroops | > 0 | `1000000` (0.1 XLM) |
+| `pro_sub_stroops` | `i128` | stroops | > 0 | `3000000` (0.3 XLM) |
+| `elite_sub_stroops` | `i128` | stroops | > 0 | `7000000` (0.7 XLM) |
+| `sub_duration_secs` | `u64` | seconds | > 0 | `2592000` (30 days = 30 × 24 × 3600) |
+
+**Validation rules:**
+- Every `i128` fee field must be > 0 (zero or negative → `InvalidInput` error code 15).
+- `sub_duration_secs` must be > 0 (zero → `InvalidInput`).
+- There is no enforced upper bound, but values larger than the XLM supply
+  (≈ 500 000 000 XLM = 5 × 10¹⁵ stroops) will cause `Overflow` errors at fee
+  settlement time.
+
+See the [Glossary](GLOSSARY.md#feeconfig) for a plain-language description of each field.
 
 ### Functions
 

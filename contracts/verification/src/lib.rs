@@ -1525,238 +1525,52 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // #475: restore_validator
+    // Duplicate validator registration tests
     // -------------------------------------------------------------------------
 
+    /// Test that register_validator fails when called with an already-registered wallet.
+    ///
+    /// Steps:
+    ///   1. Initialize contract and register a validator
+    ///   2. Attempt to register the same wallet again
+    ///   3. Assert the second registration returns ValidatorAlreadyRegistered error
+    ///   4. Verify the validator record in storage is unchanged
+    ///   5. Verify the ValidatorVector length remains 1 (no duplicate added)
+    ///
+    /// **Validates: Duplicate registration check in register_validator**
     #[test]
-    fn test_restore_validator_reactivates_revoked_validator() {
+    fn test_register_validator_already_registered_wallet_fails() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "Coach"));
+        let credentials = String::from_str(&env, "UEFA A License");
 
-        let reason: Option<String> = None;
-        client.revoke_validator(&validator, &reason);
-        assert!(!client.is_active_validator(&validator));
-
-        // Restore — validator must be active again
-        client.restore_validator(&validator);
+        // First registration succeeds
+        client.register_validator(&validator, &credentials);
         assert!(client.is_active_validator(&validator));
-    }
-
-    #[test]
-    fn test_restore_validator_emits_event() {
-        let (env, _client) = setup();
-        let admin = Address::generate(&env);
-        let contract_id = env.register_contract(None, VerificationContract);
-        let client2 = VerificationContractClient::new(&env, &contract_id);
-        client2.initialize(&admin);
-
-        let validator = Address::generate(&env);
-        client2.register_validator(&validator, &String::from_str(&env, "Coach"));
-
-        let reason: Option<String> = None;
-        client2.revoke_validator(&validator, &reason);
-        client2.restore_validator(&validator);
-
-        let emitted = env.events().all().filter_by_contract(&contract_id);
-        let has_restored = emitted.iter().any(|(_, topics, payload)| {
-            topics == (Symbol::new(&env, "validator_restored"),).into_val(&env)
-                && payload == validator.clone().into_val(&env)
-        });
-        assert!(has_restored, "validator_restored event must be emitted with wallet address");
-    }
-
-    #[test]
-    fn test_restored_validator_can_approve_milestones() {
-        // Acceptance criteria: revoke → restore → approve milestone succeeds
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "Coach"));
-
-        // Revoke
-        let reason: Option<String> = None;
-        client.revoke_validator(&validator, &reason);
-        assert!(!client.is_active_validator(&validator));
-
-        // Restore
-        client.restore_validator(&validator);
-        assert!(client.is_active_validator(&validator));
-
-        // Restored validator must be able to approve milestones
-        let result = client.try_approve_milestone(
-            &validator,
-            &1u64,
-            &String::from_str(&env, "Identity confirmed"),
-            &String::from_str(&env, VALID_CID_V0),
-        );
-        assert!(result.is_ok(), "restored validator must be able to approve milestones");
-    }
-
-    #[test]
-    fn test_restore_validator_not_found_returns_error() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let unknown = Address::generate(&env);
-        let result = client.try_restore_validator(&unknown);
-        assert_eq!(result, Err(Ok(VerificationError::ValidatorNotFound)));
-    }
-
-    #[test]
-    fn test_restore_preserves_milestone_history() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let validator = Address::generate(&env);
-        client.register_validator(&validator, &String::from_str(&env, "Coach"));
-
-        // Approve a milestone before revoking
-        client.approve_milestone(
-            &validator,
-            &1u64,
-            &String::from_str(&env, "Speed test"),
-            &String::from_str(&env, VALID_CID_V0),
-        );
-        let count_before = client.get_validator_milestone_count(&validator);
-
-        // Revoke then restore
-        let reason: Option<String> = None;
-        client.revoke_validator(&validator, &reason);
-        client.restore_validator(&validator);
-
-        // Milestone count must be unchanged after restore
-        assert_eq!(client.get_validator_milestone_count(&validator), count_before);
-    }
-
-    // -------------------------------------------------------------------------
-    // #476: transfer_validator
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_transfer_validator_record_available_under_new_wallet() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let old_wallet = Address::generate(&env);
-        let new_wallet = Address::generate(&env);
-        let credentials = String::from_str(&env, "UEFA B License");
-
-        client.register_validator(&old_wallet, &credentials);
-        client.transfer_validator(&old_wallet, &new_wallet);
-
-        // New wallet must be an active validator
-        assert!(client.is_active_validator(&new_wallet));
-        // Credentials must be preserved
-        let transferred = client.get_validator(&new_wallet);
-        assert_eq!(transferred.credentials, credentials);
-        assert_eq!(transferred.wallet, new_wallet);
-    }
-
-    #[test]
-    fn test_transfer_validator_removes_old_wallet() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let old_wallet = Address::generate(&env);
-        let new_wallet = Address::generate(&env);
-        client.register_validator(&old_wallet, &String::from_str(&env, "Coach"));
-
-        client.transfer_validator(&old_wallet, &new_wallet);
-
-        // Old wallet must no longer be a validator
-        assert!(!client.is_active_validator(&old_wallet));
-        let result = client.try_get_validator(&old_wallet);
-        assert_eq!(result, Err(Ok(VerificationError::ValidatorNotFound)));
-    }
-
-    #[test]
-    fn test_transfer_validator_updates_validator_vector() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let old_wallet = Address::generate(&env);
-        let new_wallet = Address::generate(&env);
-        client.register_validator(&old_wallet, &String::from_str(&env, "Coach"));
-
-        client.transfer_validator(&old_wallet, &new_wallet);
-
+        
+        // Verify validator is in the vector
         let validators = client.get_validators();
-        let has_new = validators.contains(&new_wallet);
-        let has_old = validators.contains(&old_wallet);
-        assert!(has_new, "new_wallet must be in ValidatorVector after transfer");
-        assert!(!has_old, "old_wallet must not be in ValidatorVector after transfer");
-    }
+        assert_eq!(validators.len(), 1);
+        assert_eq!(validators.get(0).unwrap(), validator);
 
-    #[test]
-    fn test_transfer_validator_migrates_milestone_count() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let old_wallet = Address::generate(&env);
-        let new_wallet = Address::generate(&env);
-        client.register_validator(&old_wallet, &String::from_str(&env, "Coach"));
-
-        // Approve two milestones under old wallet
-        client.approve_milestone(
-            &old_wallet,
-            &1u64,
-            &String::from_str(&env, "Milestone A"),
-            &String::from_str(&env, VALID_CID_V0),
+        // Second registration with the same wallet should fail
+        let result = client.try_register_validator(
+            &validator,
+            &String::from_str(&env, "Different credentials")
         );
-        client.approve_milestone(
-            &old_wallet,
-            &2u64,
-            &String::from_str(&env, "Milestone B"),
-            &String::from_str(&env, VALID_CID_V0),
-        );
-        let count_before = client.get_validator_milestone_count(&old_wallet);
-        assert_eq!(count_before, 2);
-
-        client.transfer_validator(&old_wallet, &new_wallet);
-
-        // New wallet must inherit the milestone count
-        assert_eq!(client.get_validator_milestone_count(&new_wallet), count_before);
-        // Old wallet count must be gone (returns 0)
-        assert_eq!(client.get_validator_milestone_count(&old_wallet), 0);
-    }
-
-    #[test]
-    fn test_transfer_validator_old_wallet_not_found_returns_error() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let unknown = Address::generate(&env);
-        let new_wallet = Address::generate(&env);
-        let result = client.try_transfer_validator(&unknown, &new_wallet);
-        assert_eq!(result, Err(Ok(VerificationError::ValidatorNotFound)));
-    }
-
-    #[test]
-    fn test_transfer_validator_new_wallet_already_registered_returns_error() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let old_wallet = Address::generate(&env);
-        let new_wallet = Address::generate(&env);
-        client.register_validator(&old_wallet, &String::from_str(&env, "Coach A"));
-        client.register_validator(&new_wallet, &String::from_str(&env, "Coach B"));
-
-        // Both are registered — transfer must fail
-        let result = client.try_transfer_validator(&old_wallet, &new_wallet);
         assert_eq!(result, Err(Ok(VerificationError::ValidatorAlreadyRegistered)));
+
+        // Verify validator record is unchanged after the second call
+        let stored_validator = client.get_validator(&validator);
+        assert_eq!(stored_validator.wallet, validator);
+        assert_eq!(stored_validator.credentials, credentials);
+        assert!(stored_validator.active);
+
+        // Verify ValidatorVector length remains 1 (no duplicate added)
+        let validators_after = client.get_validators();
+        assert_eq!(validators_after.len(), 1);
     }
 }

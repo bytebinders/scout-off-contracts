@@ -58,6 +58,32 @@ pub fn contract_unpaused(env: &Env, admin: &Address) {
         .publish((Symbol::new(env, "contract_unpaused"),), admin.clone());
 }
 
+pub fn subscription_created(
+    env: &Env,
+    scout: &Address,
+    tier: &SubscriptionTier,
+    subscribed_at: u64,
+    expires_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "subscription_created"), scout.clone()),
+        (tier.clone(), subscribed_at, expires_at),
+    );
+}
+
+pub fn subscription_renewed(
+    env: &Env,
+    scout: &Address,
+    tier: &SubscriptionTier,
+    subscribed_at: u64,
+    expires_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "subscription_renewed"), scout.clone()),
+        (tier.clone(), subscribed_at, expires_at),
+    );
+}
+
 pub fn subscription_refunded(env: &Env, scout: &Address, amount: i128) {
     env.events().publish(
         (Symbol::new(env, "subscription_refunded"), scout.clone()),
@@ -69,5 +95,12 @@ pub fn progress_contract_updated(env: &Env, progress_contract: &Address) {
     env.events().publish(
         (Symbol::new(env, "progress_contract_updated"),),
         progress_contract.clone(),
+    );
+}
+
+pub fn fee_config_updated(env: &Env, old_config: &crate::types::FeeConfig, new_config: &crate::types::FeeConfig) {
+    env.events().publish(
+        (Symbol::new(env, "fee_config_updated"),),
+        (old_config.clone(), new_config.clone()),
     );
 }
