@@ -349,10 +349,15 @@ impl RegistrationContract {
     }
 
     pub fn get_scout(env: Env, scout_id: u64) -> Result<ScoutProfile, ScoutChainError> {
-        env.storage()
+        let profile: ScoutProfile = env
+            .storage()
             .persistent()
             .get(&DataKey::Scout(scout_id))
-            .ok_or(ScoutChainError::ScoutNotFound)
+            .ok_or(ScoutChainError::ScoutNotFound)?;
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Scout(scout_id), PERSISTENT_TTL_MIN, PERSISTENT_TTL_MAX);
+        Ok(profile)
     }
 
     /// Verify a scout profile (admin only).
