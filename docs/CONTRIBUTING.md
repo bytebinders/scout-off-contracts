@@ -47,3 +47,8 @@ cargo fmt --all -- --check      # formatting must be clean
 
 Changes to validator registration, revocation, or milestone approval logic require explicit
 review from a second team member before merge — these are the trust anchors of the platform.
+
+## Glossary
+
+Unfamiliar with terms like *validator*, *milestone*, *subscription tier*, or *CID*?
+See [docs/GLOSSARY.md](GLOSSARY.md) for authoritative definitions of all domain-specific terms.

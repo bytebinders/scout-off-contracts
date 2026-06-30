@@ -1068,7 +1068,7 @@ mod tests {
         prog_client.set_verification_contract(&ver_id);
 
         let validator = Address::generate(&env);
-        ver_client.register_validator(&validator, &soroban_sdk::String::from_str(&env, "Coach"));
+        ver_client.register_validator(&validator, &soroban_sdk::String::from_str(&env, "UEFA-B-License"));
         // Approve one milestone for player 1 → milestone_ref 1 is valid.
         ver_client.approve_milestone(
             &validator,

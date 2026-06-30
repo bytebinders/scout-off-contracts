@@ -31,6 +31,18 @@ pub fn validator_revoked(env: &Env, wallet: &Address, reason: &String) {
     );
 }
 
+pub fn validator_restored(env: &Env, wallet: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "validator_restored"),), wallet.clone());
+}
+
+pub fn validator_transferred(env: &Env, old_wallet: &Address, new_wallet: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "validator_transferred"),),
+        (old_wallet.clone(), new_wallet.clone()),
+    );
+}
+
 pub fn contract_paused(env: &Env, admin: &Address) {
     env.events()
         .publish((Symbol::new(env, "contract_paused"),), admin.clone());

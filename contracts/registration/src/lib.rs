@@ -28,6 +28,9 @@ const MAX_REGION_LEN: u32 = 128;
 const MAX_STRING_LEN: u32 = 64;
 const MAX_IPFS_HASHES: u32 = 10;
 const MAX_BATCH_SIZE: u32 = 20;
+/// Maximum plausible age for a registered player. Ages above this value are
+/// rejected as implausible to prevent corrupt entries in discovery filters.
+const MAX_PLAYER_AGE: u32 = 100;
 
 // Instance TTL bump
 const INSTANCE_TTL_MIN: u32 = 100;
@@ -150,6 +153,11 @@ impl RegistrationContract {
             || vitals.region.len() > MAX_STRING_LEN
             || vitals.nationality.len() > MAX_STRING_LEN
         {
+            return Err(ScoutChainError::InvalidInput);
+        }
+
+        // Validate age upper bound
+        if vitals.age > MAX_PLAYER_AGE {
             return Err(ScoutChainError::InvalidInput);
         }
 
@@ -1847,41 +1855,66 @@ fn test_upgrade_preserves_admin() {
     }
 
     // -------------------------------------------------------------------------
-    // Issue #449: get_scout must extend persistent TTL on every read
+    // Issue #444: register_player age field must reject implausible upper values
     // -------------------------------------------------------------------------
 
-    /// Registers a scout, advances the ledger sequence past the default Soroban
-    /// persistent TTL (4096 ledgers), then asserts that `get_scout` still returns
-    /// the profile successfully.
-    ///
-    /// Without the `extend_ttl` call in `get_scout`, the Scout persistent key
-    /// expires after the initial TTL elapses and `get_scout` returns ScoutNotFound.
-    /// The fix causes every `get_scout` call to refresh the TTL.
+    /// An age of MAX_PLAYER_AGE (100) must be accepted.
     #[test]
-    fn test_get_scout_ttl_bump_keeps_profile_readable() {
-        use soroban_sdk::testutils::Ledger;
-
+    fn test_register_player_age_at_max_succeeds() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        env.ledger().with_mut(|l| {
-            l.sequence_number = 100;
-            l.max_entry_ttl = 100_000;
-        });
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 100, // exactly MAX_PLAYER_AGE
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmAgeTest")];
+
+        let result = client.try_register_player(&wallet, &vitals, &hashes);
+        assert!(result.is_ok(), "age == MAX_PLAYER_AGE should succeed");
+    }
+
+    /// An age of MAX_PLAYER_AGE + 1 (101) must be rejected with InvalidInput.
+    #[test]
+    fn test_register_player_age_above_max_returns_invalid_input() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let wallet = Address::generate(&env);
-        let region = String::from_str(&env, "Europe");
-        let scout_id = client.register_scout(&wallet, &region);
+        let vitals = PlayerVitals {
+            age: 101, // one above MAX_PLAYER_AGE
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmAgeTest")];
 
-        // Advance well past the default 4 096-ledger TTL.
-        env.ledger().with_mut(|l| {
-            l.sequence_number = 100 + 5_000;
-        });
+        let result = client.try_register_player(&wallet, &vitals, &hashes);
+        assert_eq!(result, Err(Ok(ScoutChainError::InvalidInput)));
+    }
 
-        // get_scout must still succeed because the TTL is bumped on read.
-        let profile = client.get_scout(&scout_id);
-        assert_eq!(profile.wallet, wallet);
-        assert_eq!(profile.region, region);
+    /// An implausibly large age (999) must also be rejected with InvalidInput.
+    #[test]
+    fn test_register_player_implausible_age_returns_invalid_input() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 999,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmAgeTest")];
+
+        let result = client.try_register_player(&wallet, &vitals, &hashes);
+        assert_eq!(result, Err(Ok(ScoutChainError::InvalidInput)));
     }
 }

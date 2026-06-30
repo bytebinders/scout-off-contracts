@@ -6,6 +6,48 @@
 - Stellar CLI: https://developers.stellar.org/docs/tools/developer-tools/cli/install-stellar-cli
 - A funded Stellar keypair for deployment
 
+## Contract Deployment Order
+
+The four contracts must be deployed in the following order. Deploying out of
+sequence will cause `initialize.sh` cross-contract wiring to fail with a
+missing contract ID error.
+
+1. **`registration`** — Deployed first because it owns player and scout
+   identity records. All other contracts reference `player_id` values that
+   originate here. No dependency on any other contract.
+
+2. **`verification`** — Deployed second because `approve_milestone` must
+   cross-call `progress.advance_level`. The progress contract address is wired
+   in by `initialize.sh` *after* both are deployed; deploying verification
+   before registration is safe but deploying it after progress and skipping
+   registration will break the milestone flow at runtime.
+
+3. **`progress`** — Deployed third. Holds the four-tier level state machine.
+   Receives calls only from the verification contract (production) or directly
+   (test). Must exist before `initialize.sh` runs `set_progress_contract` on
+   the verification contract.
+
+4. **`scout_access`** — Deployed last because it depends on the progress
+   contract address for `log_trial_offer → advance_level` cross-calls. It also
+   references player IDs from registration at runtime.
+
+> **Warning — do not deploy `progress` before `registration`.**
+> `initialize.sh` calls `set_progress_contract` on the registration contract
+> after deploying progress. If registration has not been deployed yet, the
+> script will fail and leave the system in a partially initialized state
+> requiring manual cleanup.
+
+> **Warning — do not run `initialize.sh` before all four contracts are
+> deployed.** The script reads all four contract IDs from `.env.contracts`. A
+> missing ID causes the wiring steps to silently pass the wrong address,
+> breaking cross-contract calls at runtime.
+
+`deploy.sh` respects this order automatically. If you are deploying manually,
+follow the numbered sequence above and write each contract ID to `.env.contracts`
+before proceeding to the next contract.
+
+---
+
 ## Step-by-step
 
 ### 1. Configure environment

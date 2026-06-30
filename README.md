@@ -646,6 +646,7 @@ MIT
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — full deployment guide including mainnet checklist
 - [docs/CONTRACT_REFERENCE.md](docs/CONTRACT_REFERENCE.md) — complete function reference for all four contracts
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — PR checklist and contribution guidelines
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — definitions of all domain-specific terms (scout, validator, milestone, CID, etc.)
 - [ai.md](ai.md) — cross-repo integration guide for AI assistants and new team members
 
 ## Support
