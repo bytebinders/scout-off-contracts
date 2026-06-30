@@ -106,4 +106,8 @@ pub enum DataKey {
     /// Primary lookup path for level-filtered queries without a region constraint.
     /// Falls back to `PlayerIndex` only when no level filter is specified.
     PlayersByLevel(ProgressLevel),
+    /// Deactivation flag for a player. When present and `true`, the player is
+    /// hidden from `filter_players` results while their profile and history are
+    /// fully preserved. Set by `deactivate_player`, cleared by `reactivate_player`.
+    PlayerDeactivated(u64),
 }

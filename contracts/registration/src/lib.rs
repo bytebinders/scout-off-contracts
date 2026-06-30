@@ -32,6 +32,15 @@ const MAX_BATCH_SIZE: u32 = 20;
 /// rejected as implausible to prevent corrupt entries in discovery filters.
 const MAX_PLAYER_AGE: u32 = 100;
 
+/// Minimum scoutable age for player registration.
+/// Players younger than this age cannot be registered on the platform.
+/// Enforced by `register_player` to ensure off-chain age-gated scouting
+/// rules can rely on the contract's on-chain guarantee.
+const MIN_PLAYER_AGE: u32 = 16;
+
+/// Maximum scoutable age for player registration.
+const MAX_PLAYER_AGE: u32 = 45;
+
 // Instance TTL bump
 const INSTANCE_TTL_MIN: u32 = 100;
 const INSTANCE_TTL_MAX: u32 = 500;
@@ -148,6 +157,11 @@ impl RegistrationContract {
             return Err(ScoutChainError::AlreadyRegistered);
         }
 
+        // Validate player age: must be at least MIN_PLAYER_AGE
+        if vitals.age == 0 || vitals.age < MIN_PLAYER_AGE {
+            return Err(ScoutChainError::InvalidInput);
+        }
+
         // Validate vitals string lengths
         if vitals.position.len() > MAX_STRING_LEN
             || vitals.region.len() > MAX_STRING_LEN
@@ -255,6 +269,35 @@ impl RegistrationContract {
         Self::composite_index_remove(&env, &level, &profile.vitals.region, player_id);
 
         events::player_deregistered(&env, player_id);
+        Ok(())
+    }
+
+    /// Deactivate a player (admin only).
+    ///
+    /// Sets a `PlayerDeactivated(player_id)` flag that causes `filter_players`
+    /// to skip this player. The on-chain profile, progress history, and all
+    /// milestone data are fully preserved and still accessible via `get_player`.
+    pub fn deactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
+        Self::require_admin(&env)?;
+        // Ensure the player actually exists before setting the flag.
+        Self::load_stored_player(&env, player_id)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::PlayerDeactivated(player_id), &true);
+        Ok(())
+    }
+
+    /// Reactivate a previously deactivated player (admin only).
+    ///
+    /// Clears the `PlayerDeactivated(player_id)` flag, making the player
+    /// visible in `filter_players` results again.
+    pub fn reactivate_player(env: Env, player_id: u64) -> Result<(), ScoutChainError> {
+        Self::require_admin(&env)?;
+        // Ensure the player actually exists.
+        Self::load_stored_player(&env, player_id)?;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PlayerDeactivated(player_id));
         Ok(())
     }
 
@@ -427,10 +470,12 @@ impl RegistrationContract {
     ///
     /// - Pass an empty string for `region` to match players in any region.
     /// - Pass an empty string for `position` to match players in any position.
-    /// - `cursor` = 0 starts from the beginning; pass the returned `next_cursor`
-    ///   to fetch the next page.  `next_cursor` = 0 in the response means no
-    ///   further results.
+    /// - `offset` = 0 starts from the beginning; pass the previously returned
+    ///   `next_cursor` value as `offset` to fetch the next page.
+    ///   `next_cursor` = 0 in the response means no further results.
     /// - `limit` is capped at 50 internally.
+    /// - Deactivated players (those with a `PlayerDeactivated` flag) are excluded
+    ///   from results. Their profiles are still accessible via `get_player`.
     ///
     /// When `region` is non-empty the composite `PlayersByLevelRegion` index is
     /// used so only matching buckets are loaded.  When `region` is empty the
@@ -459,7 +504,8 @@ impl RegistrationContract {
 
         let mut results: Vec<PlayerProfile> = Vec::new(&env);
         let mut next_cursor: u64 = 0;
-        let mut past_cursor = cursor == 0; // cursor == 0 means start from beginning
+        // Number of eligible (non-deactivated, filter-matching) entries skipped so far.
+        let mut skipped: u32 = 0;
 
         if region_filter {
             // Fast path: composite (level, region) index — only load matching buckets.
@@ -474,20 +520,28 @@ impl RegistrationContract {
                     .unwrap_or_else(|| Vec::new(&env));
 
                 for player_id in ids.iter() {
-                    if !past_cursor {
-                        if player_id == cursor {
-                            past_cursor = true;
-                        }
+                    // Skip deactivated players entirely (don't count toward offset).
+                    if env
+                        .storage()
+                        .persistent()
+                        .get::<DataKey, bool>(&DataKey::PlayerDeactivated(player_id))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
-                    if results.len() >= max_results {
-                        next_cursor = player_id;
-                        break 'outer;
-                    }
                     if let Ok(profile) = Self::load_player(&env, player_id) {
-                        if !position_filter || profile.vitals.position == position {
-                            results.push_back(profile);
+                        if position_filter && profile.vitals.position != position {
+                            continue;
                         }
+                        if skipped < offset {
+                            skipped += 1;
+                            continue;
+                        }
+                        if results.len() >= max_results {
+                            next_cursor = player_id;
+                            break 'outer;
+                        }
+                        results.push_back(profile);
                     }
                 }
             }
@@ -500,23 +554,31 @@ impl RegistrationContract {
                 .unwrap_or_else(|| Vec::new(&env));
 
             for player_id in all_ids.iter() {
-                if !past_cursor {
-                    if player_id == cursor {
-                        past_cursor = true;
-                    }
+                // Skip deactivated players entirely (don't count toward offset).
+                if env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, bool>(&DataKey::PlayerDeactivated(player_id))
+                    .unwrap_or(false)
+                {
                     continue;
-                }
-                if results.len() >= max_results {
-                    next_cursor = player_id;
-                    break;
                 }
                 if let Ok(profile) = Self::load_player(&env, player_id) {
                     if !Self::level_gte(&profile.level, &min_level) {
                         continue;
                     }
-                    if !position_filter || profile.vitals.position == position {
-                        results.push_back(profile);
+                    if position_filter && profile.vitals.position != position {
+                        continue;
                     }
+                    if skipped < offset {
+                        skipped += 1;
+                        continue;
+                    }
+                    if results.len() >= max_results {
+                        next_cursor = player_id;
+                        break;
+                    }
+                    results.push_back(profile);
                 }
             }
         }
@@ -855,6 +917,67 @@ mod tests {
         let hashes = vec![&env, String::from_str(&env, "QmTest")];
         let id = client.register_player(&wallet, &vitals, &hashes);
         assert_eq!(id, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #460: MIN_PLAYER_AGE validation
+    // -------------------------------------------------------------------------
+
+    /// age = 0 must return ScoutChainError::InvalidInput
+    #[test]
+    fn test_register_player_age_zero_returns_invalid_input() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 0,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let result = client.try_register_player(&wallet, &vitals, &hashes);
+        assert_eq!(result, Err(Ok(ScoutChainError::InvalidInput)));
+    }
+
+    /// age below MIN_PLAYER_AGE must return ScoutChainError::InvalidInput
+    #[test]
+    fn test_register_player_age_below_min_returns_invalid_input() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: MIN_PLAYER_AGE - 1,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let result = client.try_register_player(&wallet, &vitals, &hashes);
+        assert_eq!(result, Err(Ok(ScoutChainError::InvalidInput)));
+    }
+
+    /// age = MIN_PLAYER_AGE must register successfully
+    #[test]
+    fn test_register_player_age_at_min_succeeds() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: MIN_PLAYER_AGE,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let result = client.try_register_player(&wallet, &vitals, &hashes);
+        assert!(result.is_ok(), "age = MIN_PLAYER_AGE should register successfully");
     }
 
     // -------------------------------------------------------------------------
@@ -1457,7 +1580,7 @@ fn test_upgrade_preserves_admin() {
             &String::from_str(&env, "West Africa"), // region filter only
             &String::from_str(&env, ""),             // no position filter
             &ProgressLevel::Unverified,
-            &0u64,
+            &0u32,
             &20u32,
         );
 
@@ -1499,12 +1622,132 @@ fn test_upgrade_preserves_admin() {
             &String::from_str(&env, "East Asia"), // region with no players
             &String::from_str(&env, ""),           // no position filter
             &ProgressLevel::Unverified,
-            &0u64,
+            &0u32,
             &20u32,
         );
 
         assert_eq!(result.profiles.len(), 0, "no players in East Asia — must be empty");
         assert_eq!(result.next_cursor, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #474: Player deactivation and reactivation
+    // -------------------------------------------------------------------------
+
+    /// Deactivated players must NOT appear in filter_players results.
+    #[test]
+    fn test_deactivated_player_excluded_from_filter() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+
+        // Register two players in the same region/position
+        let wallet1 = Address::generate(&env);
+        let vitals1 = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let player1 = client.register_player(&wallet1, &vitals1, &hashes);
+
+        let wallet2 = Address::generate(&env);
+        let vitals2 = PlayerVitals {
+            age: 22,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Nigeria"),
+        };
+        let player2 = client.register_player(&wallet2, &vitals2, &hashes);
+
+        // Before deactivation, both appear
+        let result_before = client.filter_players(
+            &String::from_str(&env, "West Africa"),
+            &String::from_str(&env, "Forward"),
+            &ProgressLevel::Unverified,
+            &0u32,
+            &20u32,
+        );
+        assert_eq!(result_before.profiles.len(), 2);
+
+        // Deactivate player1
+        client.deactivate_player(&player1);
+
+        // After deactivation, only player2 appears
+        let result_after = client.filter_players(
+            &String::from_str(&env, "West Africa"),
+            &String::from_str(&env, "Forward"),
+            &ProgressLevel::Unverified,
+            &0u32,
+            &20u32,
+        );
+        assert_eq!(result_after.profiles.len(), 1);
+        assert_eq!(result_after.profiles.get(0).unwrap().player_id, player2);
+    }
+
+    /// get_player still returns the profile for a deactivated player (data preserved).
+    #[test]
+    fn test_deactivated_player_profile_preserved_via_get_player() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = dummy_vitals(&env);
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        client.deactivate_player(&player_id);
+
+        // Profile must still be accessible
+        let profile = client.get_player(&player_id);
+        assert_eq!(profile.wallet, wallet);
+        assert_eq!(profile.player_id, player_id);
+    }
+
+    /// Admin can reactivate a previously deactivated player.
+    /// After reactivation, the player appears in filter_players results again.
+    #[test]
+    fn test_reactivate_player_restores_filter_visibility() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let wallet = Address::generate(&env);
+        let vitals = PlayerVitals {
+            age: 20,
+            position: String::from_str(&env, "Forward"),
+            region: String::from_str(&env, "West Africa"),
+            nationality: String::from_str(&env, "Ghana"),
+        };
+        let hashes = vec![&env, String::from_str(&env, "QmTest")];
+        let player_id = client.register_player(&wallet, &vitals, &hashes);
+
+        // Deactivate then reactivate
+        client.deactivate_player(&player_id);
+
+        let result_deactivated = client.filter_players(
+            &String::from_str(&env, "West Africa"),
+            &String::from_str(&env, "Forward"),
+            &ProgressLevel::Unverified,
+            &0u32,
+            &20u32,
+        );
+        assert_eq!(result_deactivated.profiles.len(), 0);
+
+        client.reactivate_player(&player_id);
+
+        let result_reactivated = client.filter_players(
+            &String::from_str(&env, "West Africa"),
+            &String::from_str(&env, "Forward"),
+            &ProgressLevel::Unverified,
+            &0u32,
+            &20u32,
+        );
+        assert_eq!(result_reactivated.profiles.len(), 1);
+        assert_eq!(result_reactivated.profiles.get(0).unwrap().player_id, player_id);
     }
 
     // -------------------------------------------------------------------------
